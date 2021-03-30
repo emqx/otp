@@ -692,6 +692,7 @@ env() ->
      dc_dump_limit,
      send_compressed,
      max_transfer_size,
+     send_table_batch_size,
      schema
     ].
 
@@ -744,6 +745,8 @@ default_env(send_compressed) ->
     0;
 default_env(max_transfer_size) ->
     64000;
+default_env(send_table_batch_size) ->
+    0;
 default_env(schema) ->
     [].
 
@@ -794,6 +797,7 @@ do_check_type(no_table_loaders, N) when is_integer(N), N > 0 -> N;
 do_check_type(dc_dump_limit,N) when is_number(N), N > 0 -> N;
 do_check_type(send_compressed, L) when is_integer(L), L >= 0, L =< 9 -> L;
 do_check_type(max_transfer_size, N) when is_integer(N), N > 0 -> N;
+do_check_type(send_table_batch_size, L) when is_integer(L), L >= 0 -> L;
 do_check_type(schema, L) when is_list(L) -> L.
 
 bool(true) -> true;
