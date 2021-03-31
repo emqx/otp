@@ -210,7 +210,19 @@ do_get_network_copy(Tab, _Reason, _Ns, unknown, _Cs) ->
     verbose("Local table copy of ~tp has recently been deleted, ignored.~n", [Tab]),
     {not_loaded, storage_unknown};
 do_get_network_copy(Tab, Reason, Ns, Storage, Cs) ->
-    [Node | Tail] = Ns,
+    [Node | Tail] =
+        case ?catch_val(copy_from_node) of
+            undefined -> Ns;
+            CPNode when is_atom(CPNode) ->
+                case lists:member(CPNode, Ns) of
+                    true ->
+                        [CPNode | Ns -- [CPNode]];
+                    false ->
+                        Ns
+                end;
+            _ ->
+                Ns
+        end,
     case lists:member(Node,val({current, db_nodes})) of
 	true ->
 	    dbg_out("Getting table ~tp (~p) from node ~p: ~tp~n",
