@@ -361,7 +361,8 @@ this value is returned from `inet:getopts/2` when called with the option name
         recvtclass |
         recvttl |
         pktoptions |
-	ipv6_v6only.
+        ipv6_v6only |
+        ipv6_probe.
 -type connect_option() ::
         {fd, Fd :: non_neg_integer()} |
         inet:address_family() |
@@ -372,6 +373,7 @@ this value is returned from `inet:getopts/2` when called with the option name
         {tcp_module, module()} |
         {netns, file:filename_all()} |
         {bind_to_device, binary()} |
+        {ipv6_probe, boolean() | timeout()} |
         option().
 -type listen_option() ::
         {fd, Fd :: non_neg_integer()} |
@@ -567,19 +569,84 @@ Defaults to `infinity`.
       Reason  :: timeout | inet:posix().
 
 connect(Address, Port, Opts0, Timeout) ->
-    case inet:gen_tcp_module(Opts0) of
+    %% When neither `inet` nor `inet6` is provided in Opts0,
+    %% and if `ipv6_probe` option is given, try to connect ipv6 first.
+    {TryIpv6, Ipv6T} =
+        case proplists:get_value(ipv6_probe, Opts0) of
+                  true -> {true, 2000}; %% default 2 seconds
+                  false -> {false, 0};
+                  undefined -> {false, 0};
+                  T -> {true, T}
+              end,
+    %% delete it to avoid interference
+    Opts1 = proplists:delete(ipv6_probe, Opts0),
+    case inet:gen_tcp_module(Opts1) of
         {?MODULE, Opts} ->
-            Timer = inet:start_timer(Timeout),
-            Res = (catch connect1(Address,Port,Opts,Timer)),
-            _ = inet:stop_timer(Timer),
-            case Res of
-                {ok,S} -> {ok,S};
-                {error, einval} -> exit(badarg);
-                {'EXIT',Reason} -> exit(Reason);
-                Error -> Error
-            end;
+            connect_maybe_ipv6(Address, Port, Opts, Timeout, TryIpv6, Ipv6T);
         {GenTcpMod, Opts} ->
             GenTcpMod:connect(Address, Port, Opts, Timeout)
+    end.
+
+connect_maybe_ipv6(Address, Port, Opts, Timeout, TryIpv6, Ipv6T) ->
+    case maybe_ipv6(Address, Opts, TryIpv6) of
+        {probe, NewOpts} when TryIpv6 ->
+            try
+                {ok, _} = connect_0(Address, Port, NewOpts, Ipv6T)
+            catch
+                _ : _ ->
+                    %% fallback
+                    connect_0(Address, Port, Opts, Timeout)
+            end;
+        NewOpts ->
+            connect_0(Address, Port, NewOpts, Timeout)
+    end.
+
+connect_0(Address, Port, Opts, Timeout) ->
+    Timer = inet:start_timer(Timeout),
+    Res = (catch connect1(Address,Port,Opts,Timer)),
+    _ = inet:stop_timer(Timer),
+    case Res of
+        {ok,S} -> {ok,S};
+        {error, einval} -> exit(badarg);
+        {'EXIT',Reason} -> exit(Reason);
+        Error -> Error
+    end.
+
+maybe_ipv6(Host, Opts, TryIpv6) ->
+    case lists:member(inet, Opts) orelse lists:member(inet6, Opts) of
+        true ->
+            Opts; %% caller has made the decision
+        false when is_tuple(Host) ->
+            %% ip tuple provided
+            maybe_ipv6_1(Host, Opts);
+        false when TryIpv6 ->
+            %% string host
+            maybe_ipv6_2(Host, Opts);
+        false ->
+            Opts
+    end.
+
+maybe_ipv6_1(Host, Opts) when tuple_size(Host) =:= 4 -> Opts;
+maybe_ipv6_1(Host, Opts) when tuple_size(Host) =:= 8 -> [inet6 | Opts].
+
+maybe_ipv6_2(Host, Opts) ->
+    case inet:parse_address(Host) of
+        {ok, Ip} when is_tuple(Ip) ->
+            %% ip string provided, parsed into tuple
+            maybe_ipv6_1(Ip, Opts);
+        _ ->
+            maybe_ipv6_3(Host, Opts)
+    end.
+
+maybe_ipv6_3(Host, Opts) ->
+    case inet:getaddr(Host, inet6) of
+        {ok, _} ->
+            %% the target has a resolvable v6 IP
+            %% maybe try to connect
+            {probe, [inet6 | Opts]};
+        _ ->
+            %% the target has no resolvable v6 IP
+            Opts
     end.
 
 connect1(Address, Port, Opts0, Timer) ->
