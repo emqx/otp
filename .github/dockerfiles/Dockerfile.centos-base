@@ -1,26 +1,25 @@
-ARG BASE=debian:10
+ARG BASE=centos:8
 FROM $BASE
-## Need to have a second arg here as the first does not expose the $BASE in the script below
-ARG BASE=debian
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    perl \
-    gcc \
-    g++ \
-    wget \
-    make \
-    ca-certificates \
-    libbluetooth-dev \
-    tk-dev \
-    uuid-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN yum update -y && yum groupinstall -y "Development Tools"
+RUN yum install -y vim wget perl gcc gcc-c++ ca-certificates
+RUN yum install -y \
+    libffi libffi-devel \
+    zlib zlib-devel \
+    bzip2 bzip2-devel \
+    expat expat-devel \
+    ncurses ncurses-devel \
+    readline readline-devel \
+    xz xz-devel \
+    sqlite sqlite-devel \
+    gdbm gdbm-devel \
+    tk tk-devel \
+    unixODBC unixODBC-devel
 
 ENV LANG=C.UTF-8
-ENV OPENSSL_ROOT_DIR=/usr/local/openssl
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lib:/usr/lib:/usr/local/lib:$OPENSSL_ROOT_DIR/lib
 
+ENV OPENSSL_ROOT_DIR=/usr/local/openssl
+ENV PATH=$OPENSSL_ROOT_DIR/bin:$PATH
 RUN set -ex; \
     \
     wget --no-verbose --no-check-certificate -O openssl.tar.gz https://www.openssl.org/source/openssl-1.1.1k.tar.gz \
@@ -29,34 +28,27 @@ RUN set -ex; \
     && rm -rf openssl.tar.gz \
     && cd /usr/src/openssl \
     && ./Configure || true \
-    && ./config --prefix=$OPENSSL_ROOT_DIR shared zlib \
+    && CFLAGS="-fPIC -O3" ./config --prefix=$OPENSSL_ROOT_DIR shared threads zlib enable-md2 --release -Wl,--enable-new-dtags,-rpath,'$(LIBRPATH)' \
     && make -j "$(nproc)" \
     && make install \
-    && rm -rf /usr/bin/openssl /usr/include/openssl \
-    && ln -s $OPENSSL_ROOT_DIR/bin/openssl /usr/bin/openssl \
-    && ln -s $OPENSSL_ROOT_DIR/include/openssl /usr/include/openssl \
-    && echo "$OPENSSL_ROOT_DIR/lib" >> /etc/ld.so.conf \
-    && ldconfig \
     && openssl version \
     && rm -rf /usr/src/openssl
 
 ARG PYTHON_VERSION=3.8.9
 
 ENV PATH=/usr/local/bin:$PATH
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lib:/usr/lib:/usr/local/lib:$OPENSSL_ROOT_DIR/lib
 
-RUN set -ex \
-	\
-	&& wget --no-verbose --no-check-certificate -O python.tar.xz "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz" \
+RUN set -ex; \
+    \
+	wget --no-verbose --no-check-certificate -O python.tar.xz "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz" \
 	&& mkdir -p /usr/src/python \
 	&& tar -xJC /usr/src/python --strip-components=1 -f python.tar.xz \
-	&& rm python.tar.xz \
+	&& rm -rf python.tar.xz \
 	\
 	&& cd /usr/src/python \
-    && gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
-	&& ./configure \
-        --build="$gnuArch" \
+    && ./configure \
 		--enable-loadable-sqlite-extensions \
-		--enable-optimizations \
 		--enable-option-checking=fatal \
 		--enable-shared \
 		--with-system-expat \
@@ -111,25 +103,4 @@ RUN set -ex; \
     && rm -f cmake.tar.gz \
     && cmake --version
 
-RUN set -ex \
-    && runtimeDeps=' \
-		libodbc1 \
-		libssl1.1 \
-		libsctp1 \
-	' \
-	&& buildDeps=' \
-		autoconf \
-		dpkg-dev \
-		gcc \
-		g++ \
-		make \
-		libncurses-dev \
-		unixodbc-dev \
-		libssl-dev \
-		libsctp-dev \
-	' \
-	&& apt-get update \
-	&& apt-get install -y --no-install-recommends curl git vim jq \
-	&& apt-get install -y --no-install-recommends $runtimeDeps \
-	&& apt-get install -y --no-install-recommends $buildDeps \
-    && rm -rf /var/lib/apt/lists/*
+RUN yum install -y curl git vim unzip jq
