@@ -20,7 +20,7 @@
 name: Build and check Erlang/OTP
 
 on:
-  push:
+  # push:
   pull_request:
 
 jobs:
