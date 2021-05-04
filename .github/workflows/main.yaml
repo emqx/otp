@@ -20,11 +20,10 @@
 name: Build and check Erlang/OTP
 
 on:
-  # push:
+  push:
   pull_request:
 
 jobs:
-
   pack:
     name: Pack the Erlang/OTP tar.gz
     runs-on: ubuntu-latest
@@ -52,16 +51,10 @@ jobs:
           name: otp_git_archive
           path: otp_src.tar.gz
 
-  build:
-    name: Build Erlang/OTP
+  test:
+    name: Test Erlang/OTP
     runs-on: ubuntu-latest
     needs: pack
-
-    strategy:
-      matrix:
-        type: [64-bit,32-bit,cross-compile,documentation]
-      fail-fast: false
-
     steps:
       - uses: actions/checkout@v2
       - name: Download source archive
@@ -71,147 +64,102 @@ jobs:
       - name: Docker login
         uses: docker/login-action@v1
         with:
-          registry: docker.pkg.github.com
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Calculate BASE image
-        id: base
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build image
         run: |
-          BASE_TAG=$(grep "^FROM" .github/dockerfiles/Dockerfile.${{ matrix.type }} | head -1 | awk '{print $2}')
-          echo "::set-output name=BASE_TAG::${BASE_TAG}"
-          .github/scripts/base-tag "${BASE_TAG}"
-      - name: Pull BASE image
-        run: docker pull ${{ steps.base.outputs.BASE_TAG }}
-      - name: Build BASE image
-        run: |
-          docker build --pull --tag ${{ steps.base.outputs.BASE_TAG }} \
-            --cache-from ${{ steps.base.outputs.BASE_TAG }} \
-            --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }} \
-            --build-arg BASE=${{ steps.base.outputs.BASE }} .
-      - name: Build ${{ matrix.type }} image
-        run: |
-          docker build --tag otp --file .github/dockerfiles/Dockerfile.${{ matrix.type }} \
-            --build-arg ARCHIVE=otp_src.tar.gz .
-
+          GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
+          docker build --tag otp \
+            --build-arg "BASE=$GHCR/base:ubuntu20.04" \
+            --build-arg ARCHIVE=otp_src.tar.gz \
+            --file ".github/dockerfiles/Dockerfile" .
         ## Smoke build tests
-      - if: matrix.type == '32-bit' || matrix.type == '64-bit' || matrix.type == 'cross-compile'
-        name: Run smoke test
-        run: docker run -v $PWD/scripts:/scripts otp "cd /tests && /scripts/run-smoke-tests"
-
-        ## Documentation checks
-      - if: matrix.type == 'documentation'
-        name: Run xmllimt
-        run: docker run otp "make xmllint"
-      - if: matrix.type == 'documentation'
-        name: Run html link check
-        run: docker run -v $PWD/scripts:/scripts otp "/scripts/otp_html_check /otp doc/index.html"
-      - if: matrix.type == 'documentation'
-        name: Release docs to publish
-        run: |
-          docker run -v $PWD/:/github otp "make release_docs DOC_TARGETS='man html pdf' RELEASE_ROOT=/github/docs"
-          sudo chown -R `whoami` docs
-          cd docs
-          tar czf ../otp_doc_man.tar.gz man
-          rm -rf man
-          tar czf ../otp_doc_html.tar.gz *
-      - if: matrix.type == 'documentation'
-        name: Upload html documentation archive
-        uses: actions/upload-artifact@v2
-        with:
-          name: otp_doc_html
-          path: otp_doc_html.tar.gz
-      - if: matrix.type == 'documentation'
-        name: Upload man documentation archive
-        uses: actions/upload-artifact@v2
-        with:
-          name: otp_doc_man
-          path: otp_doc_man.tar.gz
-
+      - name: Run smoke test
+        run: docker run -i -v $PWD/scripts:/scripts otp sh -c "cd /tests && /scripts/run-smoke-tests"
         ## Run dialyzer
-      - if: matrix.type == '64-bit'
-        name: Run dialyzer
-        run: docker run -v $PWD/scripts:/scripts otp "/scripts/run-dialyzer"
+      - name: Run dialyzer
+        run: docker run -i -v $PWD/scripts:/scripts otp sh -c "/scripts/run-dialyzer"
 
-        ## Build pre-built tar archives
-      - if: matrix.type == '32-bit'
-        name: Build pre-built tar archives
-        run: |
-          docker run -v $PWD:/github otp \
-          "scripts/build-otp-tar -o /github/otp_clean_src.tar.gz /github/otp_src.tar.gz -b /buildroot/otp/ /buildroot/otp.tar.gz"
-      - if: matrix.type == '32-bit'
-        name: Upload pre-built tar archive
-        uses: actions/upload-artifact@v2
-        with:
-          name: otp_prebuilt
-          path: otp_src.tar.gz
 
-  ## If this is a tag that has been pushed we do some release work
-  release:
-    name: Release Erlang/OTP
+  build:
+    name: Build Erlang/OTP
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/') && github.repository == 'erlang/otp'
-    steps:
-      ## This step outputs the tag name and whether the tag is a release or patch
-      ## (all releases have only two version identifiers, while patches have three
-      ##  or more)
-      - name: Get Tag Name
-        id: tag
-        run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          VSN=${TAG#OTP-}
-          IS_RELEASE=`$(echo $TAG | grep -E '^OTP-[0-9]+\.[0-9]+$' > /dev/null) \
-            && echo "true" || echo "false"`
-          echo "::set-output name=tag::${TAG}"
-          echo "::set-output name=vsn::${VSN}"
-          echo "::set-output name=release::${IS_RELEASE}"
-      
-      - uses: actions/checkout@v2
+    needs: test
 
-      ## Publish the pre-built archive and docs
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu20.04
+          - ubuntu18.04
+          - ubuntu16.04
+          - debian10
+          - debian9
+          - raspbian10
+          - raspbian9
+          - centos8
+          - centos7
+          - centos6
+          - alpine3.13
+          - alpine3.12
+
+    steps:
+      - uses: actions/checkout@v2
       - name: Download source archive
         uses: actions/download-artifact@v2
         with:
-          name: otp_prebuilt
-      - name: Download html docs
-        uses: actions/download-artifact@v2
-        with:
-          name: otp_doc_html
-      - name: Download man docs
-        uses: actions/download-artifact@v2
-        with:
-          name: otp_doc_man
-
-      ## We add the correct version name into the file names
-      ## and create the hash files for all assets
-      - name: Create pre-build and doc archives
+          name: otp_git_archive
+      - name: prepare docker
         run: |
-          mkdir artifacts
-          tar -xzf otp_src.tar.gz
-          mv otp otp_src_${{ steps.tag.outputs.vsn }}
-          tar -czf artifacts/otp_src_${{ steps.tag.outputs.vsn }}.tar.gz otp_src_${{ steps.tag.outputs.vsn }}
-          mv otp_doc_man.tar.gz artifacts/otp_doc_man_${{ steps.tag.outputs.vsn }}.tar.gz
-          mv otp_doc_html.tar.gz artifacts/otp_doc_html_${{ steps.tag.outputs.vsn }}.tar.gz
-
-      - name: Build OTP Bundle
-        if: steps.tag.outputs.release == 'true'
-        run: |
-          scripts/bundle-otp ${{ steps.tag.outputs.tag }}
-
-      ## Create hash files
-      - name: Create pre-build and doc archives
-        run: |
-          shopt -s nullglob
-          cd artifacts
-          md5sum {*.tar.gz,*.txt} > MD5.txt
-          sha256sum {*.tar.gz,*.txt} > SHA256.txt
-
-      - name: Upload pre-built and doc tar archives
-        uses: softprops/action-gh-release@v1
+          mkdir -p $HOME/.docker
+          echo '{ "experimental": "enabled" }' | tee $HOME/.docker/config.json
+          echo '{ "experimental": true, "storage-driver": "overlay2", "max-concurrent-downloads": 50, "max-concurrent-uploads": 50, "graph": "/mnt/docker" }' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker version
+          docker buildx create --use --name mybuild
+          docker run --rm --privileged tonistiigi/binfmt --install all
+      - name: Docker login
+        uses: docker/login-action@v1
         with:
-          name: OTP ${{ steps.tag.outputs.vsn }}
-          files: |
-            artifacts/*.tar.gz
-            artifacts/*.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Set env
+        run: |
+          cat <<-EOF >> "$GITHUB_ENV"
+          GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
+          TAG=${GITHUB_REF#refs/tags/}
+          VSN=${TAG#OTP-}
+          IMAGE=$GHCR/otp:$VSN-${{ matrix.image }}
+          EOF
+          case ${{ matrix.image }}  in
+            alpine*)
+              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
+            ;;
+            centos6)
+              sed -i '3a COPY .github/dockerfiles/CentOS6-Base.repo /etc/yum.repos.d/CentOS-Base.repo' .github/dockerfiles/Dockerfile.centos-base
+              echo 'PLATFORM=linux/amd64' >> $GITHUB_ENV
+            ;;
+            centos*)
+              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
+            ;;
+            raspbian*)
+              echo 'PLATFORM=linux/arm64' >> $GITHUB_ENV
+            ;;
+            ubuntu16.04)
+              sed -i 's/libssl1.1/libssl1.0.0/g' .github/dockerfiles/Dockerfile.debian-base
+              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
+            ;;
+            *)
+              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
+            ;;
+          esac
+      - name: Build ${{ matrix.image }} image
+        run: |
+          docker buildx build --platform "$PLATFORM" \
+            --tag "$IMAGE" \
+            --file ".github/dockerfiles/Dockerfile" \
+            --build-arg "BASE=$GHCR/base:${{ matrix.image }}" . \
+            --push
