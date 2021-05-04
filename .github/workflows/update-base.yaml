@@ -52,7 +52,6 @@ jobs:
         run: |
           cat <<-EOF >> "$GITHUB_ENV"
           IMAGE=$(echo "ghcr.io/${{ github.repository }}/base" | tr 'A-Z' 'a-z')
-          TYPE=$(echo "${{ matrix.image[0] }}" | tr -d "0-9.")
           EOF
           case ${{ matrix.image[0] }}  in
             alpine*)
