@@ -93,6 +93,8 @@ RUN set -ex; \
 		\) -exec rm -rf '{}' +; \
 	rm -f get-pip.py
 
+RUN pip install pytest
+
 ENV CMAKE_VERSION=3.19.8
 ENV PATH=/usr/local/cmake/bin:$PATH
 RUN set -ex; \
@@ -103,4 +105,9 @@ RUN set -ex; \
     && rm -f cmake.tar.gz \
     && cmake --version
 
-RUN yum install -y curl git vim unzip jq
+RUN set -ex; \
+    \
+    if [ $(rpm --eval '%{centos_ver}') = 6 ]; then yum install -y http://opensource.wandisco.com/centos/6/git/x86_64/wandisco-git-release-6-1.noarch.rpm; fi \ 
+    && yum install epel-release -y \
+    && yum install -y jq git vim curl zip unzip
+

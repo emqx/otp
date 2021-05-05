@@ -53,11 +53,20 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: Build base image
+        run: |
+          GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
+          docker build \
+            --pull \
+            --cache-from  "$GHCR/ubuntu20.04-base" \
+            --tag base \
+            --file ".github/dockerfiles/Dockerfile.debian-base" \
+            --build-arg "BASE=ubuntu:20.04" .
       - name: Build image
         run: |
           GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
           docker build --tag otp \
-            --build-arg "BASE=$GHCR/base:ubuntu20.04" \
+            --build-arg "BASE=base" \
             --build-arg ARCHIVE=otp_src.tar.gz \
             --file ".github/dockerfiles/Dockerfile" .
         ## Smoke build tests
@@ -150,5 +159,5 @@ jobs:
           docker buildx build --platform "$PLATFORM" \
             --tag "$IMAGE" \
             --file ".github/dockerfiles/Dockerfile" \
-            --build-arg "BASE=$GHCR/base:${{ matrix.image }}" . \
+            --build-arg "BASE=$GHCR/${{ matrix.image }}-base" . \
             --push

@@ -2,6 +2,7 @@ name: Update docker base image
 
 ## Update the base image every day
 on:
+  push:
   workflow_dispatch:
   schedule:
   ## In UTC
@@ -25,6 +26,7 @@ jobs:
           - ['debian9',  'debian:9']
           - ['raspbian10', 'balenalib/rpi-raspbian:buster']
           - ['raspbian9',  'balenalib/rpi-raspbian:stretch']
+          - ['opensuse',  'opensuse/tumbleweed:latest']
           - ['centos8', 'centos:8']
           - ['centos7', 'centos:7']
           - ['centos6', 'centos:6']
@@ -51,7 +53,7 @@ jobs:
       - name: Set env
         run: |
           cat <<-EOF >> "$GITHUB_ENV"
-          IMAGE=$(echo "ghcr.io/${{ github.repository }}/base" | tr 'A-Z' 'a-z')
+          IMAGE=$(echo "ghcr.io/${{ github.repository }}/${{ matrix.image[0] }}-base" | tr 'A-Z' 'a-z')
           EOF
           case ${{ matrix.image[0] }}  in
             alpine*)
@@ -67,6 +69,10 @@ jobs:
               echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
               echo 'DOCKERFILE=Dockerfile.centos-base' >> $GITHUB_ENV
             ;;
+            opensuse)
+              echo 'PLATFORM=linux/amd64' >> $GITHUB_ENV
+              echo 'DOCKERFILE=Dockerfile.opensuse-base' >> $GITHUB_ENV
+            ;;
             raspbian*)
               echo 'PLATFORM=linux/arm64' >> $GITHUB_ENV
               echo 'DOCKERFILE=Dockerfile.raspbian-base' >> $GITHUB_ENV
@@ -81,12 +87,25 @@ jobs:
               echo 'DOCKERFILE=Dockerfile.debian-base' >> $GITHUB_ENV
             ;;
           esac
-      - name: Build base image
+      - name: Build ${{ matrix.image[0] }} base image
+        if: matrix.image[0] != 'opensuse'
         run: |
-          docker buildx build --platform "$PLATFORM" \
+          docker buildx build \
             --pull \
-            --tag "$IMAGE:${{ matrix.image[0] }}" \
-            --cache-from  "$IMAGE:${{ matrix.image[0] }}"\
+            --cache-from  "$IMAGE" \
+            --platform "$PLATFORM" \
+            --tag "$IMAGE" \
+            --file ".github/dockerfiles/$DOCKERFILE" \
+            --build-arg "BASE=${{ matrix.image[1] }}" . \
+            --push
+      - name: Build ${{ matrix.image[0] }} base image
+        if: matrix.image[0] == 'opensuse'
+        run: |
+          docker buildx build \
+            --pull \
+            --no-cache \
+            --platform "$PLATFORM" \
+            --tag "$IMAGE" \
             --file ".github/dockerfiles/$DOCKERFILE" \
             --build-arg "BASE=${{ matrix.image[1] }}" . \
             --push

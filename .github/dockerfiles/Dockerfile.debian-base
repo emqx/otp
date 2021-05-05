@@ -101,6 +101,8 @@ RUN set -ex; \
 		\) -exec rm -rf '{}' +; \
 	rm -f get-pip.py
 
+RUN pip install pytest
+
 ENV CMAKE_VERSION=3.19.8
 ENV PATH=/usr/local/cmake/bin:$PATH
 RUN set -ex; \
@@ -129,7 +131,7 @@ RUN set -ex \
 		libsctp-dev \
 	' \
 	&& apt-get update \
-	&& apt-get install -y --no-install-recommends curl git vim jq \
+	&& apt-get install -y --no-install-recommends curl zip unzip git vim jq debhelper build-essential libncurses5-dev \
 	&& apt-get install -y --no-install-recommends $runtimeDeps \
 	&& apt-get install -y --no-install-recommends $buildDeps \
     && rm -rf /var/lib/apt/lists/*
