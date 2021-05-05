@@ -67,19 +67,28 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: Build base image
+        run: |
+          GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
+          docker build \
+            --pull \
+            --cache-from  "$GHCR/base:ubuntu20.04" \
+            --tag base \
+            --file ".github/dockerfiles/Dockerfile.debian-base" \
+            --build-arg "BASE=ubuntu:20.04" .
       - name: Build image
         run: |
           GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
           docker build --tag otp \
-            --build-arg "BASE=$GHCR/base:ubuntu20.04" \
+            --build-arg "BASE=base" \
             --build-arg ARCHIVE=otp_src.tar.gz \
             --file ".github/dockerfiles/Dockerfile" .
         ## Smoke build tests
       - name: Run smoke test
         run: docker run -i -v $PWD/scripts:/scripts otp sh -c "cd /tests && /scripts/run-smoke-tests"
         ## Run dialyzer
-      - name: Run dialyzer
-        run: docker run -i -v $PWD/scripts:/scripts otp sh -c "/scripts/run-dialyzer"
+        ## - name: Run dialyzer
+        ##   run: docker run -i -v $PWD/scripts:/scripts otp sh -c "/scripts/run-dialyzer"
 
 
   build:
@@ -132,7 +141,7 @@ jobs:
           GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
           TAG=${GITHUB_REF#refs/tags/}
           VSN=${TAG#OTP-}
-          IMAGE=$GHCR/otp:$VSN-${{ matrix.image }}
+          IMAGE=$GHCR:$VSN-${{ matrix.image }}
           EOF
           case ${{ matrix.image }}  in
             alpine*)

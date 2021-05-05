@@ -18,27 +18,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV LANG=C.UTF-8
-ENV OPENSSL_ROOT_DIR=/usr/local/openssl
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lib:/usr/lib:/usr/local/lib:$OPENSSL_ROOT_DIR/lib
 
-RUN set -ex; \
-    \
-    wget --no-verbose --no-check-certificate -O openssl.tar.gz https://www.openssl.org/source/openssl-1.1.1k.tar.gz \
-    && mkdir -p /usr/src/openssl \
-    && tar -zxvf openssl.tar.gz -C /usr/src/openssl --strip-components=1 \
-    && rm -rf openssl.tar.gz \
-    && cd /usr/src/openssl \
-    && ./Configure || true \
-    && ./config --prefix=$OPENSSL_ROOT_DIR shared zlib \
-    && make -j "$(nproc)" \
-    && make install \
-    && rm -rf /usr/bin/openssl /usr/include/openssl \
-    && ln -s $OPENSSL_ROOT_DIR/bin/openssl /usr/bin/openssl \
-    && ln -s $OPENSSL_ROOT_DIR/include/openssl /usr/include/openssl \
-    && echo "$OPENSSL_ROOT_DIR/lib" >> /etc/ld.so.conf \
-    && ldconfig \
-    && openssl version \
-    && rm -rf /usr/src/openssl
+# ENV OPENSSL_ROOT_DIR=/usr/local/openssl
+# ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lib:/usr/lib:/usr/local/lib:$OPENSSL_ROOT_DIR/lib
+# 
+# RUN set -ex; \
+#     \
+#     wget --no-verbose --no-check-certificate -O openssl.tar.gz https://www.openssl.org/source/openssl-1.1.1k.tar.gz \
+#     && mkdir -p /usr/src/openssl \
+#     && tar -zxvf openssl.tar.gz -C /usr/src/openssl --strip-components=1 \
+#     && rm -rf openssl.tar.gz \
+#     && cd /usr/src/openssl \
+#     && ./Configure || true \
+#     && ./config --prefix=$OPENSSL_ROOT_DIR shared zlib \
+#     && make -j "$(nproc)" \
+#     && make install \
+#     && rm -rf /usr/bin/openssl /usr/include/openssl \
+#     && ln -s $OPENSSL_ROOT_DIR/bin/openssl /usr/bin/openssl \
+#     && ln -s $OPENSSL_ROOT_DIR/include/openssl /usr/include/openssl \
+#     && echo "$OPENSSL_ROOT_DIR/lib" >> /etc/ld.so.conf \
+#     && ldconfig \
+#     && openssl version \
+#     && rm -rf /usr/src/openssl
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    libssl-dev \
+    && openssl version
 
 ARG PYTHON_VERSION=3.8.9
 
@@ -53,7 +59,7 @@ RUN set -ex \
 	\
 	&& cd /usr/src/python \
     && gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
-	&& ./configure \
+    && ./configure \
         --build="$gnuArch" \
 		--enable-loadable-sqlite-extensions \
 		--enable-optimizations \
@@ -62,7 +68,16 @@ RUN set -ex \
 		--with-system-expat \
 		--with-system-ffi \
 		--without-ensurepip \
-        --with-openssl=$OPENSSL_ROOT_DIR \
+	# && ./configure \
+    #     --build="$gnuArch" \
+	# 	--enable-loadable-sqlite-extensions \
+	# 	--enable-optimizations \
+	# 	--enable-option-checking=fatal \
+	# 	--enable-shared \
+	# 	--with-system-expat \
+	# 	--with-system-ffi \
+	# 	--without-ensurepip \
+    #     --with-openssl=$OPENSSL_ROOT_DIR \
 	&& make -j "$(nproc)" \
 	&& make install \
 	&& rm -rf /usr/src/python \
@@ -101,6 +116,8 @@ RUN set -ex; \
 		\) -exec rm -rf '{}' +; \
 	rm -f get-pip.py
 
+RUN pip install pytest
+
 ENV CMAKE_VERSION=3.19.8
 ENV PATH=/usr/local/cmake/bin:$PATH
 RUN set -ex; \
@@ -129,7 +146,7 @@ RUN set -ex \
 		libsctp-dev \
 	' \
 	&& apt-get update \
-	&& apt-get install -y --no-install-recommends curl git vim jq \
+	&& apt-get install -y --no-install-recommends curl zip unzip git vim jq debhelper build-essential libncurses5-dev \
 	&& apt-get install -y --no-install-recommends $runtimeDeps \
 	&& apt-get install -y --no-install-recommends $buildDeps \
     && rm -rf /var/lib/apt/lists/*

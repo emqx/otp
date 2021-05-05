@@ -134,6 +134,8 @@ RUN set -ex; \
 		\) -exec rm -rf '{}' +; \
 	rm -f get-pip.py
 
+RUN pip install pytest
+
 ENV CMAKE_VERSION=3.19.8
 RUN set -ex; \
     \
@@ -159,7 +161,9 @@ RUN apk add --no-cache --virtual .fetch-deps \
 		ncurses-dev \
 		unixodbc-dev \
 		lksctp-tools-dev \
+        bsd-compat-headers \
 		tar \
         git \
         vim \
+        bash \
         jq
