@@ -18,94 +18,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image:
-          - ['ubuntu20.04', 'ubuntu:20.04']
-          - ['ubuntu18.04', 'ubuntu:18.04']
-          - ['ubuntu16.04', 'ubuntu:16.04']
-          - ['debian10', 'debian:10']
-          - ['debian9',  'debian:9']
-          - ['raspbian10', 'balenalib/rpi-raspbian:buster']
-          - ['raspbian9',  'balenalib/rpi-raspbian:stretch']
-          - ['opensuse',  'opensuse/tumbleweed:latest']
-          - ['centos8', 'centos:8']
-          - ['centos7', 'centos:7']
-          - ['centos6', 'centos:6']
-          - ['alpine3.13', 'alpine:3.13']
-          - ['alpine3.12', 'alpine:3.12']
+        platform:
+          - [ubuntu20.04, "linux/amd64,linux/arm64"]
+          - [ubuntu18.04, "linux/amd64,linux/arm64"]
+          - [ubuntu16.04, "linux/amd64,linux/arm64"]
+          - [debian10   , "linux/amd64,linux/arm64"]
+          - [debian9    , "linux/amd64,linux/arm64"]
+          - [centos8    , "linux/amd64,linux/arm64"]
+          - [centos7    , "linux/amd64,linux/arm64"]
+          - [centos6    , "linux/amd64"]
+          - [opensuse   , "linux/amd64,linux/arm64"]
+          - [raspbian10 , "linux/arm64"]
+          - [raspbian9  , "linux/arm64"]
+          - [alpine3.14 , "linux/amd64,linux/arm64,linux/arm/v7"]
 
     steps:
       - uses: actions/checkout@v2
-      - name: prepare docker
-        run: |
-          mkdir -p $HOME/.docker
-          echo '{ "experimental": "enabled" }' | tee $HOME/.docker/config.json
-          echo '{ "experimental": true, "storage-driver": "overlay2", "max-concurrent-downloads": 50, "max-concurrent-uploads": 50, "graph": "/mnt/docker" }' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-          docker version
-          docker buildx create --use --name mybuild
-          docker run --rm --privileged tonistiigi/binfmt --install all
+      - uses: docker/setup-buildx-action@v1
+      - uses: docker/setup-qemu-action@v1
+        with:
+          image: tonistiigi/binfmt:latest
+          platforms: all
       - name: Docker login
         uses: docker/login-action@v1
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Set env
-        run: |
-          cat <<-EOF >> "$GITHUB_ENV"
-          IMAGE=$(echo "ghcr.io/${{ github.repository }}/${{ matrix.image[0] }}-base" | tr 'A-Z' 'a-z')
-          EOF
-          case ${{ matrix.image[0] }}  in
-            alpine*)
-              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
-              echo 'DOCKERFILE=Dockerfile.alpine-base' >> $GITHUB_ENV
-            ;;
-            centos6)
-              sed -i '3a COPY .github/dockerfiles/CentOS6-Base.repo /etc/yum.repos.d/CentOS-Base.repo' .github/dockerfiles/Dockerfile.centos-base
-              echo 'PLATFORM=linux/amd64' >> $GITHUB_ENV
-              echo 'DOCKERFILE=Dockerfile.centos-base' >> $GITHUB_ENV
-            ;;
-            centos*)
-              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
-              echo 'DOCKERFILE=Dockerfile.centos-base' >> $GITHUB_ENV
-            ;;
-            opensuse)
-              echo 'PLATFORM=linux/amd64' >> $GITHUB_ENV
-              echo 'DOCKERFILE=Dockerfile.opensuse-base' >> $GITHUB_ENV
-            ;;
-            raspbian*)
-              echo 'PLATFORM=linux/arm64' >> $GITHUB_ENV
-              echo 'DOCKERFILE=Dockerfile.raspbian-base' >> $GITHUB_ENV
-            ;;
-            ubuntu16.04)
-              sed -i 's/libssl1.1/libssl1.0.0/g' .github/dockerfiles/Dockerfile.debian-base
-              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
-              echo 'DOCKERFILE=Dockerfile.debian-base' >> $GITHUB_ENV
-            ;;
-            *)
-              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
-              echo 'DOCKERFILE=Dockerfile.debian-base' >> $GITHUB_ENV
-            ;;
-          esac
-      - name: Build ${{ matrix.image[0] }} base image
-        if: matrix.image[0] != 'opensuse'
-        run: |
-          docker buildx build \
-            --pull \
-            --cache-from  "$IMAGE" \
-            --platform "$PLATFORM" \
-            --tag "$IMAGE" \
-            --file ".github/dockerfiles/$DOCKERFILE" \
-            --build-arg "BASE=${{ matrix.image[1] }}" . \
-            --push
-      - name: Build ${{ matrix.image[0] }} base image
-        if: matrix.image[0] == 'opensuse'
-        run: |
-          docker buildx build \
-            --pull \
-            --no-cache \
-            --platform "$PLATFORM" \
-            --tag "$IMAGE" \
-            --file ".github/dockerfiles/$DOCKERFILE" \
-            --build-arg "BASE=${{ matrix.image[1] }}" . \
-            --push
+      - uses: docker/build-push-action@v2
+        with:
+          push: true
+          pull: true
+          no-cache: true
+          platforms: ${{ matrix.platform[1] }}
+          tags: ghcr.io/rory-z/otp/base:${{ matrix.platform[0] }}
+          file: .github/dockerfiles/Dockerfile.${{ matrix.platform[0] }}
