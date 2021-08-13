@@ -23,6 +23,10 @@ on:
   push:
   pull_request:
 
+permissions:
+  packages: write
+  contents: read
+
 jobs:
   pack:
     name: Pack the Erlang/OTP tar.gz
@@ -47,38 +51,50 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: otp_git_archive
+      - uses: docker/setup-buildx-action@v1
       - name: Docker login
         uses: docker/login-action@v1
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: ghcr
+        id: ghcr
+        run: |
+          GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
+          echo "::set-output name=ghcr::$GHCR"
       - name: Build base image
-        run: |
-          GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
-          docker build \
-            --pull \
-            --cache-from  "$GHCR/ubuntu20.04-base" \
-            --tag base \
-            --file ".github/dockerfiles/Dockerfile.debian-base" \
-            --build-arg "BASE=ubuntu:20.04" .
-      - name: Build image
-        run: |
-          GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
-          docker build --tag otp \
-            --build-arg "BASE=base" \
-            --build-arg ARCHIVE=otp_src.tar.gz \
-            --file ".github/dockerfiles/Dockerfile" .
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          pull: true
+          cache-from: ${{ steps.ghcr.outputs.ghcr }}/base:ubuntu20.04
+          platforms: linux/amd64
+          tags: ${{ steps.ghcr.outputs.ghcr }}/base:ubuntu20.04
+          file: .github/dockerfiles/Dockerfile.ubuntu20.04
+      - name: Build otp image
+        uses: docker/build-push-action@v2
+        with:
+          push: false
+          pull: true
+          no-cache: true
+          load: true
+          platforms: linux/amd64
+          tags: otp
+          build-args: |
+            ARCHIVE=otp_src.tar.gz
+            BASE=${{ steps.ghcr.outputs.ghcr }}/base:ubuntu20.04
+          file: .github/dockerfiles/Dockerfile
+          context: .
         ## Smoke build tests
       - name: Run smoke test
         run: docker run -i -v $PWD/scripts:/scripts otp sh -c "cd /tests && /scripts/run-smoke-tests"
         ## Check formatting of cpp code
-      - name: Check format
-        run: docker run -v $PWD/scripts:/scripts otp "make format-check"
+        # - name: Check format
+        #   run: docker run -v $PWD/scripts:/scripts otp "make format-check"
         ## Run dialyzer
-      - name: Run dialyzer
-        run: docker run -i -v $PWD/scripts:/scripts otp sh -c "/scripts/run-dialyzer"
-
+        #  - name: Run dialyzer
+        #    run: docker run -i -v $PWD/scripts:/scripts otp sh -c "/scripts/run-dialyzer"
 
   build:
     name: Build Erlang/OTP
@@ -89,19 +105,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image:
-          - ubuntu20.04
-          - ubuntu18.04
-          - ubuntu16.04
-          - debian10
-          - debian9
-          - raspbian10
-          - raspbian9
-          - centos8
-          - centos7
-          - centos6
-          - alpine3.13
-          - alpine3.12
+        platform:
+          - [ubuntu20.04, "linux/amd64,linux/arm64"]
+          - [ubuntu18.04, "linux/amd64,linux/arm64"]
+          - [ubuntu16.04, "linux/amd64,linux/arm64"]
+          - [debian10   , "linux/amd64,linux/arm64"]
+          - [debian9    , "linux/amd64,linux/arm64"]
+          - [centos8    , "linux/amd64,linux/arm64"]
+          - [centos7    , "linux/amd64,linux/arm64"]
+          - [centos6    , "linux/amd64"]
+          - [opensuse   , "linux/amd64,linux/arm64"]
+          - [raspbian10 , "linux/arm64"]
+          - [alpine3.14 , "linux/amd64,linux/arm64,linux/arm/v7"]
 
     steps:
       - uses: actions/checkout@v2
@@ -109,15 +124,11 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: otp_git_archive
-      - name: prepare docker
-        run: |
-          mkdir -p $HOME/.docker
-          echo '{ "experimental": "enabled" }' | tee $HOME/.docker/config.json
-          echo '{ "experimental": true, "storage-driver": "overlay2", "max-concurrent-downloads": 50, "max-concurrent-uploads": 50, "graph": "/mnt/docker" }' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-          docker version
-          docker buildx create --use --name mybuild
-          docker run --rm --privileged tonistiigi/binfmt --install all
+      - uses: docker/setup-buildx-action@v1
+      - uses: docker/setup-qemu-action@v1
+        with:
+          image: tonistiigi/binfmt:latest
+          platforms: all
       - name: Docker login
         uses: docker/login-action@v1
         with:
@@ -125,39 +136,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - name: Set env
+        id: env
         run: |
-          cat <<-EOF >> "$GITHUB_ENV"
           GHCR=$(echo "ghcr.io/${{ github.repository }}" | tr 'A-Z' 'a-z')
           TAG=${GITHUB_REF#refs/tags/}
           VSN=${TAG#OTP-}
-          IMAGE=$GHCR/otp:$VSN-${{ matrix.image }}
-          EOF
-          case ${{ matrix.image }}  in
-            alpine*)
-              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
-            ;;
-            centos6)
-              sed -i '3a COPY .github/dockerfiles/CentOS6-Base.repo /etc/yum.repos.d/CentOS-Base.repo' .github/dockerfiles/Dockerfile.centos-base
-              echo 'PLATFORM=linux/amd64' >> $GITHUB_ENV
-            ;;
-            centos*)
-              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
-            ;;
-            raspbian*)
-              echo 'PLATFORM=linux/arm64' >> $GITHUB_ENV
-            ;;
-            ubuntu16.04)
-              sed -i 's/libssl1.1/libssl1.0.0/g' .github/dockerfiles/Dockerfile.debian-base
-              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
-            ;;
-            *)
-              echo 'PLATFORM=linux/amd64,linux/arm64' >> $GITHUB_ENV
-            ;;
-          esac
-      - name: Build ${{ matrix.image }} image
-        run: |
-          docker buildx build --platform "$PLATFORM" \
-            --tag "$IMAGE" \
-            --file ".github/dockerfiles/Dockerfile" \
-            --build-arg "BASE=$GHCR/${{ matrix.image }}-base" . \
-            --push
+          IMAGE=$GHCR:$VSN-${{ matrix.platform[0] }}
+
+          echo "::set-output name=ghcr::$GHCR"
+          echo "::set-output name=image::$IMAGE"
+      - name: Build base image
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          pull: true
+          cache-from: ${{ steps.env.outputs.ghcr }}/base:${{ matrix.platform[0] }}
+          platforms: ${{ matrix.platform[1] }}
+          tags: ${{ steps.env.outputs.ghcr }}/base:${{ matrix.platform[0] }}
+          file: .github/dockerfiles/Dockerfile.${{ matrix.platform[0] }}
+      - name: Build otp image
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          pull: true
+          no-cache: true
+          platforms: ${{ matrix.platform[1] }}
+          tags: ${{ steps.env.outputs.image }}
+          build-args: |
+            ARCHIVE=otp_src.tar.gz
+            BASE=${{ steps.env.outputs.ghcr }}/base:${{ matrix.platform[0] }}
+          file: .github/dockerfiles/Dockerfile
+          context: .

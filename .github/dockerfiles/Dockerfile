@@ -1,4 +1,4 @@
-ARG BASE=ghcr.io/rory-z/otp/base:debian10
+ARG BASE=ghcr.io/emqx/otp/base:ubuntu20.04
 FROM $BASE
 
 ARG ARCHIVE=otp_src.tar.gz

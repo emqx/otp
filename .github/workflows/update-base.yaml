@@ -2,7 +2,6 @@ name: Update docker base image
 
 ## Update the base image every day
 on:
-  push:
   workflow_dispatch:
   schedule:
   ## In UTC
@@ -29,7 +28,6 @@ jobs:
           - [centos6    , "linux/amd64"]
           - [opensuse   , "linux/amd64,linux/arm64"]
           - [raspbian10 , "linux/arm64"]
-          - [raspbian9  , "linux/arm64"]
           - [alpine3.14 , "linux/amd64,linux/arm64,linux/arm/v7"]
 
     steps:
@@ -51,5 +49,5 @@ jobs:
           pull: true
           no-cache: true
           platforms: ${{ matrix.platform[1] }}
-          tags: ghcr.io/rory-z/otp/base:${{ matrix.platform[0] }}
+          tags: ghcr.io/${{ github.repository }}/base:${{ matrix.platform[0] }}
           file: .github/dockerfiles/Dockerfile.${{ matrix.platform[0] }}
