@@ -250,6 +250,7 @@ way, option `send_timeout` comes in handy.
 -export([send/2, recv/2, recv/3, unrecv/2]).
 -export([controlling_process/2]).
 -export([fdopen/2]).
+-export([ipv6_probe/0]).
 
 -include("inet_int.hrl").
 -include("file.hrl").
@@ -398,6 +399,8 @@ As returned by [`accept/1,2`](`accept/1`) and [`connect/3,4`](`connect/3`).
 
 %% -define(DBG(T), erlang:display({{self(), ?MODULE, ?LINE, ?FUNCTION_NAME}, T})).
 
+-spec ipv6_probe() -> true.
+ipv6_probe() -> true.
 
 %%
 %% Connect a socket
