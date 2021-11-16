@@ -28,6 +28,7 @@
 -export([send/2, recv/2, recv/3, unrecv/2]).
 -export([controlling_process/2]).
 -export([fdopen/2]).
+-export([ipv6_probe/0]).
 
 -include("inet_int.hrl").
 -include("file.hrl").
