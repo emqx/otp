@@ -1,8 +1,8 @@
 %%
 %% %CopyrightBegin%
-%% 
+%%
 %% Copyright Ericsson AB 1999-2019. All Rights Reserved.
-%% 
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -14,14 +14,14 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 -module(io_SUITE).
 
 -export([all/0, suite/0]).
 
--export([error_1/1, float_g/1, float_w/1, otp_5403/1, otp_5813/1, otp_6230/1, 
+-export([error_1/1, float_g/1, float_w/1, otp_5403/1, otp_5813/1, otp_6230/1,
          otp_6282/1, otp_6354/1, otp_6495/1, otp_6517/1, otp_6502/1,
          manpage/1, otp_6708/1, otp_7084/0, otp_7084/1, otp_7421/1,
 	 io_lib_collect_line_3_wb/1, cr_whitespace_in_string/1,
@@ -55,7 +55,7 @@ suite() ->
     [{ct_hooks,[ts_install_cth]},
      {timetrap,{minutes,1}}].
 
-all() -> 
+all() ->
     [error_1, float_g, float_w, otp_5403, otp_5813, otp_6230,
      otp_6282, otp_6354, otp_6495, otp_6517, otp_6502,
      manpage, otp_6708, otp_7084, otp_7421,
@@ -691,15 +691,15 @@ otp_6354(Config) when is_list(Config) ->
 
     bt(<<"kljkljlksdjjlf kljalkjlsdajafasjdfj [kjljklasdf,kjlljsfd,sdfsdkjfsd,kjjsdf,jl,
                                      lkjjlajsfd|jsdf]">>,
-             fmt("~w ~w ~p", 
+             fmt("~w ~w ~p",
                  [kljkljlksdjjlf,
                   kljalkjlsdajafasjdfj,
-                  [kjljklasdf,kjlljsfd,sdfsdkjfsd,kjjsdf,jl,lkjjlajsfd | 
+                  [kjljklasdf,kjlljsfd,sdfsdkjfsd,kjjsdf,jl,lkjjlajsfd |
                    jsdf]])),
 
     %% Binaries are split as well:
     bt(<<"<<80,100,0,55,55,55,55,55,55,55,55,55,\n  "
-               "55,55,55,55,55,55,55,...>>">>, 
+               "55,55,55,55,55,55,55,...>>">>,
              p(<<80,100,0,55,55,55,55,55,55,55,55,55,55,55,55,55,55,55,
                  55,55,55,55,55,55,55,55,55,55,55,55>>,1,40,20)),
     bt(<<"<<80,100,0,55,55,55,55,55,55,55,55,55,\n  "
@@ -770,7 +770,7 @@ rp(Term, Col, Ll, D, RF) ->
 rp(Term, Col, Ll, D, M, none) ->
     rp(Term, Col, Ll, D, M, fun(_, _) -> no end);
 rp(Term, Col, Ll, D, M, RF) ->
-    %% io:format("~n~n*** Col = ~p Ll = ~p D = ~p~n~p~n-->~n", 
+    %% io:format("~n~n*** Col = ~p Ll = ~p D = ~p~n~p~n-->~n",
     %%           [Col, Ll, D, Term]),
     R = io_lib_pretty:print(Term, Col, Ll, D, M, RF),
     %% io:format("~s~n<--~n", [R]),
@@ -884,11 +884,11 @@ otp_6708(Config) when is_list(Config) ->
                 jklsdjfklsd, masdfjkkl}, -1)),
     bt(<<"#b{f = {lkjljalksdf,jklaskfjd,kljasdlf,kljasdf,kljsdlkf,\n"
                "                    kjdd}}">>,
-             p({b, {lkjljalksdf,jklaskfjd,kljasdlf,kljasdf,kljsdlkf,kjdd}}, 
+             p({b, {lkjljalksdf,jklaskfjd,kljasdlf,kljasdf,kljsdlkf,kjdd}},
                -1)),
     bt(<<"#b{f = {lkjljalksdf,jklaskfjd,kljasdlf,kljasdf,kljsdlkf,\n"
                "                    kdd}}">>,
-             p({b, {lkjljalksdf,jklaskfjd,kljasdlf,kljasdf,kljsdlkf,kdd}}, 
+             p({b, {lkjljalksdf,jklaskfjd,kljasdlf,kljasdf,kljsdlkf,kdd}},
                -1)),
     bt(<<"#e{f = undefined,g = undefined,\n"
                "   h = #e{f = 11,g = 22,h = 333}}">>,
@@ -900,7 +900,7 @@ otp_6708(Config) when is_list(Config) ->
                " 23,\n"
                " {{abadalkjlasdjflksdajfksdklfsdjlkfdlskjflsdj"
                         "flsdjfldsdsdddd}}]">>,
-          p(lists:seq(1,23) ++ 
+          p(lists:seq(1,23) ++
             [{{abadalkjlasdjflksdajfksdklfsdjlkfdlskjflsdjflsdjfldsdsdddd}}],
             -1)),
     bt(<<"{lkjasdf,\n"
@@ -1029,7 +1029,7 @@ g_denormalized() ->
     [ft({{S,0,?ONE(N)},D,D}) || S <- [0,1], N <- lists:seq(0, 52)],
     ok.
 
-g_normalized() -> 
+g_normalized() ->
     %% Normalized floats (exponent carry):
 %%    D = 5,
     %% Faster:
@@ -1096,7 +1096,7 @@ g_anomalous() ->
 
 g_ryu() ->
     %% specific white box tests that should trigger specific edge cases
-    %% to the ryu algorithm see: 
+    %% to the ryu algorithm see:
     %% https://github.com/ulfjack/ryu/blob/master/ryu/tests/d2s_test.cc
 
     %% this list is regression tests from the ryu C ref implementation
@@ -1109,7 +1109,7 @@ g_ryu() ->
     %% These numbers have a mantissa that is a multiple of the largest power of 5 that fits,
     %% and an exponent that causes the computation for q to result in 22, which is a corner
     %% case for Ryu.
-    L_pow5 = [16#4830F0CF064DD592, 16#4840F0CF064DD592, 
+    L_pow5 = [16#4830F0CF064DD592, 16#4840F0CF064DD592,
               16#4850F0CF064DD592],
     lists:foreach(fun(V) -> g_t(i_2_d(V)) end, L_pow5),
 
@@ -1222,7 +1222,7 @@ parts_2_f(S, E, M) ->
     <<F:64/float>> = <<S:1, E:11, M:52>>,
     F.
 
-g_misc() -> 
+g_misc() ->
     L_0_308 = lists:seq(0, 308),
     L_0_307 = lists:seq(0, 307),
 
@@ -1317,16 +1317,16 @@ g_t_1(V, Sv) ->
     %% to V than Sv, but such that when reading SvMinus (SvPlus) wrong
     %% float would be returned.
     case rat_lte(Abs_Sv_Vr, Svminus_Vr) of
-        true -> 
+        true ->
             ok;
-        false ->  
+        false ->
              case list_to_float(SvMinus) of
                  V -> throw(vsminus_too_close_to_v);
                  _Vminus -> ok
              end
     end,
     case rat_lte(Abs_Sv_Vr, Svplus_Vr) of
-        true -> 
+        true ->
             ok;
         false ->
              case list_to_float(SvPlus) of
@@ -1340,7 +1340,7 @@ g_t_1(V, Sv) ->
     %%       that |V - Sv| =< (V+ - V)
     %% (An alternative is  V- + V =< 2*Sv =< V + V+.)
     case inc(V) of
-        inf -> 
+        inf ->
             ok;
         Vplus ->
             Vplusr = f2r(Vplus),
@@ -1395,7 +1395,7 @@ g_t_1(V, Sv) ->
 
     ok.
 
-%%% In "123450000.0", '5' is the lsd; 
+%%% In "123450000.0", '5' is the lsd;
 %%% in "1234.0000", (the last) '0' is the lsd;
 %%% in "1234.0", '4' is the lsd (the Erlang syntax requires the final zero).
 
@@ -1431,7 +1431,7 @@ step_lsd(Ds, N) when N < 0 ->
 %% Increments or decrements the least significant digit.
 incr_lsd("-"++Ds, I) ->
     "-"++incr_lsd(Ds, I);
-incr_lsd(Ds, I) when I =:= 1; I =:= -1 -> 
+incr_lsd(Ds, I) when I =:= 1; I =:= -1 ->
     [MS|E] = string:tokens(Ds, "eE"),
     X = ["e" || true <- [E =/= []]],
     lists:flatten([incr_lsd0(lists:reverse(MS), I, []), X, E]).
@@ -1464,7 +1464,7 @@ s2r(S) when is_list(S) ->
         [MS, ES] ->
             Mr = s10(MS),
             E = list_to_integer(ES),
-            if 
+            if
                 E < 0 ->
                     rat_multiply(Mr, {1,pow10(-E)});
                 true ->
@@ -1508,7 +1508,7 @@ dec({S,BE,M}) when 0 =< S, S =< 1,
     <<F1:64/float>> = <<S1:1, BE1:11, M1:52>>,
     true = F1 < F,
     F1.
-    
+
 
 dec1(0, 0, 0) ->
     dec1(1, 0, 0);
@@ -1608,12 +1608,12 @@ rat_normalize({T,N}) when N =/= 0 ->
     N2 = N div G,
     if
         T2 < 0 ->
-            if 
+            if
                 N2 < 0 -> {-T2,-N2};
                 true -> {T2,N2}
             end;
         true ->
-            if 
+            if
                 N2 < 0 -> {-T2,-N2};
                 true -> {T2,N2}
             end
@@ -1690,7 +1690,7 @@ g_choice_small(S) when is_list(S) ->
             end;
         Pre =:= 0, Post =:= 0, El > 0 ->   % D.DDDeDD
             E = list_to_integer(ES),
-            if 
+            if
                 E >= 0 ->
                     Cost = E - (Fl - 1);
                 E < 0 ->
@@ -1851,7 +1851,7 @@ read_newlines_file(Fname) ->
     after
 	file:close(Fd)
     end.
-    
+
 
 read_newlines(Fd, Acc, N0) ->
     case io:fread(Fd, "", "~d~l") of
@@ -2017,7 +2017,7 @@ printable_range(Suite) when is_list(Suite) ->
     $> = print_max(DNode,
 		   [<<16#10FFFF/utf8,"\t\v\b\f\e\r\n">>,
 		    PrettyOptions]),
-    
+
     1025 = format_max(UNode, ["~tp", [{hello, [1024,1025]}]]),
     125 = format_max(LNode,  ["~tp", [{hello, [1024,1025]}]]),
     125 = format_max(DNode,  ["~tp", [{hello, [1024,1025]}]]),
