@@ -135,6 +135,7 @@
           certs_keys                 => {undefined, [versions]},
           certfile                   => {<<>>,      [versions]},
           certificate_authorities    => {false,     [versions]},
+          certificate_status         => {undefined, []},
           ciphers                    => {[],        [versions]},
           client_renegotiation       => {undefined, [versions]},
           cookie                     => {true,      [versions]},

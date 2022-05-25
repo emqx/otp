@@ -274,10 +274,11 @@ certificate(undefined, _, _, _, client) ->
     {ok, #certificate_1_3{
             certificate_request_context = <<>>,
             certificate_list = []}};
-certificate([OwnCert], CertDbHandle, CertDbRef, _CRContext, Role) ->
+certificate([OwnCert], CertDbHandle, CertDbRef, CRContext, Role) ->
     case ssl_certificate:certificate_chain(OwnCert, CertDbHandle, CertDbRef) of
 	{ok, _, Chain} ->
-            CertList = chain_to_cert_list(Chain),
+            CertList0 = chain_to_cert_list(Chain),
+            CertList = maybe_add_certificate_entry_extensions(CertList0, CRContext),
             %% If this message is in response to a CertificateRequest, the value of
             %% certificate_request_context in that message. Otherwise (in the case
             %%of server authentication), this field SHALL be zero length.
@@ -297,8 +298,9 @@ certificate([OwnCert], CertDbHandle, CertDbRef, _CRContext, Role) ->
                     certificate_request_context = <<>>,
                     certificate_list = []}}
     end;
-certificate([_,_| _] = Chain, _,_,_,_) ->
-    CertList = chain_to_cert_list(Chain),
+certificate([_,_| _] = Chain, _,_,CRContext,_) ->
+    CertList0 = chain_to_cert_list(Chain),
+    CertList = maybe_add_certificate_entry_extensions(CertList0, CRContext),
     {ok, #certificate_1_3{
             certificate_request_context = <<>>,
             certificate_list = CertList}}.
@@ -703,6 +705,7 @@ do_start(#client_hello{cipher_suites = ClientCiphers,
                          State2
                  end,
 
+        StatusRequest = maps:get(status_request, Extensions, undefined),
         State4 = update_start_state(State3,
                                     #{cipher => Cipher,
                                       key_share => KeyShare,
@@ -710,7 +713,8 @@ do_start(#client_hello{cipher_suites = ClientCiphers,
                                       group => Group,
                                       sign_alg => SelectedSignAlg,
                                       peer_public_key => ClientPubKey,
-                                      alpn => ALPNProtocol}),
+                                      alpn => ALPNProtocol,
+                                      status_request => StatusRequest}),
 
         %% 4.1.4.  Hello Retry Request
         %%
@@ -1355,11 +1359,20 @@ maybe_send_certificate_request(#state{static_env = #static_env{protocol_cb = Con
 maybe_send_certificate(State, PSK) when  PSK =/= undefined ->
     {ok, State};
 maybe_send_certificate(#state{session = #session{own_certificates = OwnCerts},
+                              protocol_specific = ProtocolSpecific,
+                              ssl_options = SslOpts,
                               static_env = #static_env{
                                               protocol_cb = Connection,
                                               cert_db = CertDbHandle,
                                               cert_db_ref = CertDbRef}} = State, _) ->
-    case certificate(OwnCerts, CertDbHandle, CertDbRef, <<>>, server) of
+    %% hack: apparently, CRContext is not used by the server (whatever
+    %% that may be...)
+    StatusRequest = maps:get(status_request, ProtocolSpecific, undefined),
+    CertificateStatus = maps:get(certificate_status, SslOpts, undefined),
+    CRContext = #{ status_request => StatusRequest
+                 , certificate_status => CertificateStatus
+                 },
+    case certificate(OwnCerts, CertDbHandle, CertDbRef, CRContext, server) of
         {ok, Certificate} ->
             {ok, Connection:queue_handshake(Certificate, State)};
         Error ->
@@ -1928,16 +1941,19 @@ update_start_state(State, Map) ->
     SelectedSignAlg = maps:get(sign_alg, Map, undefined),
     PeerPublicKey = maps:get(peer_public_key, Map, undefined),
     ALPNProtocol = maps:get(alpn, Map, undefined),
+    StatusRequest = maps:get(status_request, Map, undefined),
     update_start_state(State, Cipher, KeyShare, SessionId,
                        Group, SelectedSignAlg, PeerPublicKey,
-                       ALPNProtocol).
+                       ALPNProtocol, StatusRequest).
 %%
 update_start_state(#state{connection_states = ConnectionStates0,
                           handshake_env = #handshake_env{} = HsEnv,
                           connection_env = CEnv,
+                          protocol_specific = ProtocolSpecific0,
                           session = Session} = State,
                    Cipher, KeyShare, SessionId,
-                   Group, SelectedSignAlg, PeerPublicKey, ALPNProtocol) ->
+                   Group, SelectedSignAlg, PeerPublicKey, ALPNProtocol,
+                   StatusRequest) ->
     #{security_parameters := SecParamsR0} = PendingRead =
         maps:get(pending_read, ConnectionStates0),
     #{security_parameters := SecParamsW0} = PendingWrite =
@@ -1947,9 +1963,11 @@ update_start_state(#state{connection_states = ConnectionStates0,
     ConnectionStates =
         ConnectionStates0#{pending_read => PendingRead#{security_parameters => SecParamsR},
                            pending_write => PendingWrite#{security_parameters => SecParamsW}},
+    ProtocolSpecific = ProtocolSpecific0#{status_request => StatusRequest},
     State#state{connection_states = ConnectionStates,
                 handshake_env = HsEnv#handshake_env{alpn = ALPNProtocol},
                 key_share = KeyShare,
+                protocol_specific = ProtocolSpecific,
                 session = Session#session{session_id = SessionId,
                                           ecc = Group,
                                           sign_alg = SelectedSignAlg,
@@ -3067,3 +3085,20 @@ select_client_cert_key_pair(Session0, [#{private_key := Key, certs := [Cert| _] 
                                         CertDbHandle, CertDbRef, CertAuths)
     end.
 
+maybe_add_certificate_entry_extensions(
+  [ServerCertEntry = #certificate_entry{} | Rest],
+  #{ status_request := #certificate_status_request{} = Req
+   , certificate_status := #certificate_status{} = Status
+   }) ->
+    [ ServerCertEntry#certificate_entry{
+        extensions =
+            #{ status_request =>
+                   Req#certificate_status_request{
+                     status_type = ?CERTIFICATE_STATUS_TYPE_OCSP,
+                     request = Status
+                    }
+             }
+       }
+    | Rest];
+maybe_add_certificate_entry_extensions(CertList, _CRContext) ->
+    CertList.

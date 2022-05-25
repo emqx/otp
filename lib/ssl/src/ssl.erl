@@ -2139,6 +2139,10 @@ validate_option(certfile, Value, _)
 validate_option(certfile, Value, _)
   when is_list(Value) ->
     binary_filename(Value);
+validate_option(certificate_status, Value = #certificate_status{}, _) ->
+    Value;
+validate_option(certificate_status, Value = undefined, _) ->
+    Value;
 validate_option(client_preferred_next_protocols, {Precedence, PreferredProtocols}, _)
   when is_list(PreferredProtocols) ->
     validate_binary_list(client_preferred_next_protocols, PreferredProtocols),
