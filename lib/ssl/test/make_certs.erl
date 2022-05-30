@@ -183,6 +183,22 @@ revoke(Root, CA, User, C) ->
     cmd(Cmd, Env),
     gencrl(Root, CA, C).
 
+make_ocsp_response(Port, Root, CA, User, Issuer, C) ->
+    UsrCert = filename:join([Root, User, "cert.pem"]),
+    IssuerCert = filename:join([Root, Issuer, "cert.pem"]),
+    CACertFile = filename:join([Root, CA, "cert.pem"]),
+    OCSPResp = filename:join([Root, User, "ocsp.resp"]),
+    Cmd = [C#config.openssl_cmd, " ocsp"
+           " -CAfile ", CACertFile,
+           " -url ", "http://localhost:" ++ integer_to_list(Port),
+           " -no_nonce",
+           " -respout ", OCSPResp,
+	   " -issuer ", IssuerCert,
+	   " -cert ", UsrCert],
+    Env = [{"ROOTDIR", filename:absname(Root)}],
+    cmd(Cmd, Env),
+    OCSPResp.
+
 %% Remove the certificate's entry from the database. The OCSP responder
 %% will consider the certificate to be unknown.
 remove_entry(Root, CA, User, C) ->
