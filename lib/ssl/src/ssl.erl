@@ -3705,6 +3705,7 @@ ssl_options() ->
      max_fragment_length,
      next_protocol_selector,  next_protocols_advertised,
      stapling,
+     certificate_status,
      padding_check,
      partial_chain,
      password,
@@ -3740,10 +3741,11 @@ update_options(Opts, Role, InheritedSslOpts) when is_map(InheritedSslOpts) ->
     Env = #{role => Role, validate_certs_or_anon_ciphers => Role == server},
     process_options(UserSslOpts, InheritedSslOpts, Env).
 
-process_options(UserSslOpts, SslOpts0, Env) ->
+process_options(UserSslOpts, SslOptsIn, Env) ->
     %% Reverse option list so we get the last set option if set twice,
     %% users depend on it.
     UserSslOptsMap = proplists:to_map(lists:reverse(UserSslOpts)),
+    SslOpts0  = opt_certificate_status(UserSslOptsMap, SslOptsIn, Env),
     SslOpts1  = opt_protocol_versions(UserSslOptsMap, SslOpts0, Env),
     SslOpts2  = opt_verification(UserSslOptsMap, SslOpts1, Env),
     SslOpts3  = opt_certs(UserSslOptsMap, SslOpts2, Env),
@@ -4211,6 +4213,15 @@ opt_stapling(UserOpts, #{versions := _Versions} = Opts, #{role := client}) ->
 opt_stapling(UserOpts, Opts, #{role := server}) ->
     assert_client_only(stapling, UserOpts),
     Opts.
+
+opt_certificate_status(UserOpts, Opts, #{role := _Role}) ->
+    {_, CertificateStatus} = get_opt(certificate_status, undefined, UserOpts, Opts),
+    case CertificateStatus of
+        undefined -> ok;
+        #certificate_status{} -> ok;
+        _Value -> option_error(certificate_status, CertificateStatus)
+    end,
+    Opts#{certificate_status => CertificateStatus}.
 
 opt_sni(UserOpts, #{versions := _Versions} = Opts, #{role := server}) ->
     {_, SniHosts} = get_opt_list(sni_hosts, [], UserOpts, Opts),
