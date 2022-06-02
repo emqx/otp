@@ -2278,14 +2278,16 @@ distpoints_lookup([DistPoint | Rest], Issuer, Callback, CRLDbHandle, LogLevel) -
 		%% version of the lookup function.
 		Callback:lookup(DistPoint, CRLDbHandle)
 	end,
+    %% CRLs is possibly a list of lists if `ssl_crl_cache:insert/2`
+    %% is called with an URI.
     case Result of
 	not_available ->
 	    distpoints_lookup(Rest, Issuer, Callback, CRLDbHandle, LogLevel);
 	{logger, LogInfo, CRLs} ->
             handle_log(LogLevel, LogInfo),
-            CRLs;
+            lists:flatten(CRLs);
         CRLs ->
-	    CRLs
+	    lists:flatten(CRLs)
     end.
 
 encrypted_premaster_secret(Secret, RSAPublicKey) ->
