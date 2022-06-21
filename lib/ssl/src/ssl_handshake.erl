@@ -2285,9 +2285,9 @@ distpoints_lookup([DistPoint | Rest], Issuer, Callback, CRLDbHandle, LogLevel) -
 	    distpoints_lookup(Rest, Issuer, Callback, CRLDbHandle, LogLevel);
 	{logger, LogInfo, CRLs} ->
             handle_log(LogLevel, LogInfo),
-            lists:flatten(CRLs);
+            CRLs;
         CRLs ->
-	    lists:flatten(CRLs)
+            CRLs
     end.
 
 encrypted_premaster_secret(Secret, RSAPublicKey) ->

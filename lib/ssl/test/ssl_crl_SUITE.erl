@@ -240,10 +240,15 @@ crl_verify_valid(Config) when is_list(Config) ->
 		  end,			  
     {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
 
+    ssl_crl_cache:insert("http://localhost/erlangCA/crl.pem", {file, filename:join([PrivDir, "erlangCA", "crl.pem"])}),
+    ssl_crl_cache:insert("http://localhost/otpCA/crl.pem", {file, filename:join([PrivDir, "otpCA", "crl.pem"])}),
     ssl_crl_cache:insert({file, filename:join([PrivDir, "erlangCA", "crl.pem"])}),
     ssl_crl_cache:insert({file, filename:join([PrivDir, "otpCA", "crl.pem"])}),
-    
-    crl_verify_valid(Hostname, ServerNode, ServerOpts, ClientNode, ClientOpts).
+
+    crl_verify_valid(Hostname, ServerNode, ServerOpts, ClientNode, ClientOpts),
+
+    %% check that delete WITH URI works as well.
+    ssl_crl_cache:delete("http://localhost/erlangCA/crl.pem").
 
 crl_verify_revoked() ->
     [{doc,"Verify a simple CRL chain when peer cert is reveoked"}].
@@ -256,8 +261,6 @@ crl_verify_revoked(Config)  when is_list(Config) ->
 
     {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
 
-    ssl_crl_cache:insert("http://localhost/erlangCA/crl.pem", {file, filename:join([PrivDir, "erlangCA", "crl.pem"])}),
-    ssl_crl_cache:insert("http://localhost/otpCA/crl.pem", {file, filename:join([PrivDir, "otpCA", "crl.pem"])}),
     ssl_crl_cache:insert({file, filename:join([PrivDir, "erlangCA", "crl.pem"])}),
     ssl_crl_cache:insert({file, filename:join([PrivDir, "otpCA", "crl.pem"])}),
     
