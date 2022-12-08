@@ -615,6 +615,9 @@ connect_0(Address, Port, Opts, Timeout) ->
         Error -> Error
     end.
 
+maybe_ipv6({local, _}, Opts, _TryIpv6) ->
+    %% unapplicable to local sockets
+    Opts;
 maybe_ipv6(Host, Opts, TryIpv6) ->
     case lists:member(inet, Opts) orelse lists:member(inet6, Opts) of
         true ->
@@ -629,8 +632,8 @@ maybe_ipv6(Host, Opts, TryIpv6) ->
             Opts
     end.
 
-maybe_ipv6_1(Host, Opts) when tuple_size(Host) =:= 4 -> Opts;
-maybe_ipv6_1(Host, Opts) when tuple_size(Host) =:= 8 -> [inet6 | Opts].
+maybe_ipv6_1(Ip, Opts) when tuple_size(Ip) =:= 4 -> Opts;
+maybe_ipv6_1(Ip, Opts) when tuple_size(Ip) =:= 8 -> [inet6 | Opts].
 
 maybe_ipv6_2(Host, Opts) ->
     case inet:parse_address(Host) of
