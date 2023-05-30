@@ -743,12 +743,19 @@ do_server_hello(Type, #{next_protocol_negotiation := NextProtocols} =
                        handshake_env = HsEnv,
 		       session = #session{session_id = SessId},
 		       connection_states = ConnectionStates0,
-                       ssl_options = #{versions := [HighestVersion|_]}}
+                       ssl_options = #{versions := [HighestVersion|_]} = SSLOpts0}
 		= State0) when is_atom(Type) ->
     %% TLS 1.3 - Section 4.1.3
     %% Override server random values for TLS 1.3 downgrade protection mechanism.
     ConnectionStates1 = update_server_random(ConnectionStates0, Version, HighestVersion),
-    State1 = State0#state{connection_states = ConnectionStates1},
+    SSLOpts1 = case {SSLOpts0, ServerHelloExt} of
+                   { #{certificate_status := #certificate_status{}}
+                   , #{status_request := #certificate_status_request{}}
+                   } -> SSLOpts0;
+                   _ -> SSLOpts0#{certificate_status => undefined}
+               end,
+    State1 = State0#state{connection_states = ConnectionStates1,
+                          ssl_options = SSLOpts1},
     ServerHello =
 	ssl_handshake:server_hello(SessId, ssl:tls_version(Version),
                                    ConnectionStates1, ServerHelloExt),
@@ -925,8 +932,14 @@ do_client_certify_and_key_exchange(State0, Connection) ->
 
 server_certify_and_key_exchange(State0, Connection) ->
     State1 = certify_server(State0, Connection),
-    State2 = key_exchange(State1, Connection),
-    request_client_cert(State2, Connection).
+    State2 = certificate_status(State1, Connection),
+    State3 = key_exchange(State2, Connection),
+    request_client_cert(State3, Connection).
+
+certificate_status(#state{ssl_options = #{certificate_status := #certificate_status{} = Status}} = State, Connection) ->
+    Connection:queue_handshake(Status, State);
+certificate_status(State, _) ->
+    State.
 
 certify_client_key_exchange(#encrypted_premaster_secret{premaster_secret= EncPMS},
 			    #state{session = #session{private_key = PrivateKey},

@@ -87,9 +87,9 @@ static char erts_system_version[] = ("Erlang/OTP " ERLANG_OTP_RELEASE
 				     " [erts-" ERLANG_VERSION "]"
 #ifndef OTP_RELEASE
 #ifdef ERLANG_GIT_VERSION
-				     " [source-" ERLANG_GIT_VERSION "]"
+				     " [emqx-" ERLANG_GIT_VERSION "]"
 #else
-				     " [source]"
+				     " [emqx]"
 #endif
 #endif	
 #if defined(ARCH_64)

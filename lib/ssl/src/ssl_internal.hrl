@@ -66,7 +66,7 @@
 -define(NO_DIST_POINT, "http://dummy/no_distribution_point").
 -define(NO_DIST_POINT_PATH, "dummy/no_distribution_point").
 
-%% Common enumerate values in for SSL-protocols 
+%% Common enumerate values in for SSL-protocols
 -define(NULL, 0).
 -define(TRUE, 0).
 -define(FALSE, 1).
@@ -136,6 +136,7 @@
           certs_keys                 => {undefined, [versions]},
           certfile                   => {<<>>,      [versions]},
           certificate_authorities    => {false,     [versions]},
+          certificate_status         => {undefined, []},
           ciphers                    => {[],        [versions]},
           client_renegotiation       => {undefined, [versions]},
           cookie                     => {true,      [versions]},
@@ -248,7 +249,7 @@
 
 -record(socket_options,
 	{
-	  mode   = list, 
+	  mode   = list,
 	  packet = 0,
 	  packet_size = 0,
 	  header = 0,
@@ -257,8 +258,8 @@
 
 -record(config, {ssl,               %% SSL parameters
 		 inet_user,         %% User set inet options
-		 emulated,          %% Emulated option list or 
-                 trackers, 
+		 emulated,          %% Emulated option list or
+                 trackers,
 		 dtls_handler,
 		 inet_ssl,          %% inet options for internal ssl socket
 		 transport_info,                 %% Callback info
@@ -302,8 +303,3 @@
 
 
 -endif. % -ifdef(ssl_internal).
-
-
-
-
-

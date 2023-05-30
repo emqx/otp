@@ -237,14 +237,14 @@ add_signature_algorithms_cert(Extensions, SignAlgsCert) ->
 
 filter_tls13_algs(undefined) -> undefined;
 filter_tls13_algs(Algo) ->
-    lists:foldl(fun(Atom, Acc) when is_atom(Atom) -> 
+    lists:foldl(fun(Atom, Acc) when is_atom(Atom) ->
                         [Atom | Acc];
                    ({sha512, rsa}, Acc) ->
                         [rsa_pkcs1_sha512 | Acc];
                    ({sha384, rsa}, Acc) ->
                         [rsa_pkcs1_sha384 | Acc];
                    ({sha256, rsa}, Acc) ->
-                        [rsa_pkcs1_sha256 | Acc];                   
+                        [rsa_pkcs1_sha256 | Acc];
                    ({sha, rsa}, Acc) ->
                         [rsa_pkcs1_sha1 | Acc];
                    ({sha, ecdsa}, Acc) ->
@@ -278,10 +278,11 @@ certificate(undefined, _, _, _, client) ->
     {ok, #certificate_1_3{
             certificate_request_context = <<>>,
             certificate_list = []}};
-certificate([OwnCert], CertDbHandle, CertDbRef, _CRContext, Role) ->
+certificate([OwnCert], CertDbHandle, CertDbRef, CRContext, Role) ->
     case ssl_certificate:certificate_chain(OwnCert, CertDbHandle, CertDbRef) of
 	{ok, _, Chain} ->
-            CertList = chain_to_cert_list(Chain),
+            CertList0 = chain_to_cert_list(Chain),
+            CertList = maybe_add_certificate_entry_extensions(CertList0, CRContext),
             %% If this message is in response to a CertificateRequest, the value of
             %% certificate_request_context in that message. Otherwise (in the case
             %%of server authentication), this field SHALL be zero length.
@@ -301,8 +302,9 @@ certificate([OwnCert], CertDbHandle, CertDbRef, _CRContext, Role) ->
                     certificate_request_context = <<>>,
                     certificate_list = []}}
     end;
-certificate([_,_| _] = Chain, _,_,_,_) ->
-    CertList = chain_to_cert_list(Chain),
+certificate([_,_| _] = Chain, _,_,CRContext,_) ->
+    CertList0 = chain_to_cert_list(Chain),
+    CertList = maybe_add_certificate_entry_extensions(CertList0, CRContext),
     {ok, #certificate_1_3{
             certificate_request_context = <<>>,
             certificate_list = CertList}}.
@@ -363,13 +365,13 @@ key_update(Type) ->
 %%====================================================================
 
 encode_handshake(#certificate_request_1_3{
-                    certificate_request_context = Context, 
+                    certificate_request_context = Context,
                     extensions = Exts})->
     EncContext = encode_cert_req_context(Context),
     BinExts = encode_extensions(Exts),
     {?CERTIFICATE_REQUEST, <<EncContext/binary, BinExts/binary>>};
 encode_handshake(#certificate_1_3{
-                    certificate_request_context = Context, 
+                    certificate_request_context = Context,
                     certificate_list = Entries}) ->
     EncContext = encode_cert_req_context(Context),
     EncEntries = encode_cert_entries(Entries),
@@ -381,12 +383,12 @@ encode_handshake(#certificate_verify_1_3{
     EncSign = encode_signature(Signature),
     {?CERTIFICATE_VERIFY, <<EncAlgo/binary, EncSign/binary>>};
 encode_handshake(#encrypted_extensions{extensions = Exts})->
-    {?ENCRYPTED_EXTENSIONS, encode_extensions(Exts)};        
+    {?ENCRYPTED_EXTENSIONS, encode_extensions(Exts)};
 encode_handshake(#new_session_ticket{
-                    ticket_lifetime = LifeTime,  
-                    ticket_age_add = Age,   
-                    ticket_nonce = Nonce,     
-                    ticket = Ticket,           
+                    ticket_lifetime = LifeTime,
+                    ticket_age_add = Age,
+                    ticket_nonce = Nonce,
+                    ticket = Ticket,
                     extensions = Exts}) ->
     TicketSize = byte_size(Ticket),
     NonceSize = byte_size(Nonce),
@@ -436,14 +438,14 @@ decode_handshake(?CERTIFICATE_REQUEST, <<?BYTE(CSize), Context:CSize/binary,
        extensions = Exts};
 decode_handshake(?CERTIFICATE, <<?BYTE(0), ?UINT24(Size), Certs:Size/binary>>) ->
     CertList = decode_cert_entries(Certs),
-    #certificate_1_3{ 
+    #certificate_1_3{
        certificate_request_context = <<>>,
        certificate_list = CertList
       };
 decode_handshake(?CERTIFICATE, <<?BYTE(CSize), Context:CSize/binary,
                                  ?UINT24(Size), Certs:Size/binary>>) ->
     CertList = decode_cert_entries(Certs),
-    #certificate_1_3{ 
+    #certificate_1_3{
        certificate_request_context = Context,
        certificate_list = CertList
       };
@@ -461,10 +463,10 @@ decode_handshake(?NEW_SESSION_TICKET, <<?UINT32(LifeTime), ?UINT32(Age),
                                         ?UINT16(TicketSize), Ticket:TicketSize/binary,
                                         ?UINT16(BinExtSize), BinExts:BinExtSize/binary>>) ->
     Exts = decode_extensions(BinExts, encrypted_extensions),
-    #new_session_ticket{ticket_lifetime = LifeTime,  
-                        ticket_age_add = Age,   
-                        ticket_nonce = Nonce,     
-                        ticket = Ticket,           
+    #new_session_ticket{ticket_lifetime = LifeTime,
+                        ticket_age_add = Age,
+                        ticket_nonce = Nonce,
+                        ticket = Ticket,
                         extensions = Exts};
 decode_handshake(?END_OF_EARLY_DATA, _) ->
     #end_of_early_data{};
@@ -498,14 +500,14 @@ encode_cert_entries(Entries) ->
     CertEntryList = encode_cert_entries(Entries, []),
     Size = byte_size(CertEntryList),
     <<?UINT24(Size), CertEntryList/binary>>.
- 
+
 encode_cert_entries([], Acc) ->
     iolist_to_binary(lists:reverse(Acc));
 encode_cert_entries([#certificate_entry{data = Data,
                                         extensions = Exts} | Rest], Acc) ->
     DSize = byte_size(Data),
     BinExts = encode_extensions(Exts),
-    encode_cert_entries(Rest, 
+    encode_cert_entries(Rest,
                         [<<?UINT24(DSize), Data/binary, BinExts/binary>> | Acc]).
 
 encode_algorithm(Algo) ->
@@ -637,15 +639,15 @@ do_start(#client_hello{cipher_suites = ClientCiphers,
         ClientGroups0 = Maybe(supported_groups_from_extensions(Extensions)),
         ClientGroups = Maybe(get_supported_groups(ClientGroups0)),
         ServerGroups = Maybe(get_supported_groups(ServerGroups0)),
-        
+
         ClientShares0 = maps:get(key_share, Extensions, undefined),
         ClientShares = get_key_shares(ClientShares0),
-        
+
         OfferedPSKs = get_offered_psks(Extensions),
-        
+
         ClientALPN0 = maps:get(alpn, Extensions, undefined),
         ClientALPN = ssl_handshake:decode_alpn(ClientALPN0),
- 
+
         ClientSignAlgs = get_signature_scheme_list(
                            maps:get(signature_algs, Extensions, undefined)),
         ClientSignAlgsCert = get_signature_scheme_list(
@@ -707,6 +709,7 @@ do_start(#client_hello{cipher_suites = ClientCiphers,
                          State2
                  end,
 
+        StatusRequest = maps:get(status_request, Extensions, undefined),
         State4 = update_start_state(State3,
                                     #{cipher => Cipher,
                                       key_share => KeyShare,
@@ -714,7 +717,8 @@ do_start(#client_hello{cipher_suites = ClientCiphers,
                                       group => Group,
                                       sign_alg => SelectedSignAlg,
                                       peer_public_key => ClientPubKey,
-                                      alpn => ALPNProtocol}),
+                                      alpn => ALPNProtocol,
+                                      status_request => StatusRequest}),
 
         %% 4.1.4.  Hello Retry Request
         %%
@@ -976,7 +980,7 @@ do_wait_finished(#finished{verify_data = VerifyData},
 do_wait_finished(#finished{verify_data = VerifyData},
                  #state{static_env = #static_env{role = client,
                                                  protocol_cb = Connection}} = State0) ->
-    
+
     {Ref,Maybe} = maybe(),
 
     try
@@ -1011,7 +1015,7 @@ do_wait_sh(#server_hello{cipher_suite = SelectedCipherSuite,
                                   supported_groups := ClientGroups0,
                                   session_tickets := SessionTickets,
                                   use_ticket := UseTicket}} = State0) ->
-    
+
     {Ref,Maybe} = maybe(),
     try
         ClientGroups = Maybe(get_supported_groups(ClientGroups0)),
@@ -1359,7 +1363,7 @@ maybe_send_certificate_request(State, #{verify := verify_none}, _) ->
     {State, wait_finished};
 maybe_send_certificate_request(#state{static_env = #static_env{protocol_cb = Connection,
                                                                cert_db = CertDbHandle,
-                                                               cert_db_ref = CertDbRef}} = State, 
+                                                               cert_db_ref = CertDbRef}} = State,
                                #{verify := verify_peer,
                                  signature_algs := SignAlgs,
                                  signature_algs_cert := SignAlgsCert,
@@ -1370,11 +1374,20 @@ maybe_send_certificate_request(#state{static_env = #static_env{protocol_cb = Con
 maybe_send_certificate(State, PSK) when  PSK =/= undefined ->
     {ok, State};
 maybe_send_certificate(#state{session = #session{own_certificates = OwnCerts},
+                              protocol_specific = ProtocolSpecific,
+                              ssl_options = SslOpts,
                               static_env = #static_env{
                                               protocol_cb = Connection,
                                               cert_db = CertDbHandle,
                                               cert_db_ref = CertDbRef}} = State, _) ->
-    case certificate(OwnCerts, CertDbHandle, CertDbRef, <<>>, server) of
+    %% hack: apparently, CRContext is not used by the server (whatever
+    %% that may be...)
+    StatusRequest = maps:get(status_request, ProtocolSpecific, undefined),
+    CertificateStatus = maps:get(certificate_status, SslOpts, undefined),
+    CRContext = #{ status_request => StatusRequest
+                 , certificate_status => CertificateStatus
+                 },
+    case certificate(OwnCerts, CertDbHandle, CertDbRef, CRContext, server) of
         {ok, Certificate} ->
             {ok, Connection:queue_handshake(Certificate, State)};
         Error ->
@@ -1414,13 +1427,13 @@ maybe_send_session_ticket(State, 0) ->
 maybe_send_session_ticket(#state{connection_states = ConnectionStates,
                                  static_env = #static_env{trackers = Trackers,
                                                           protocol_cb = Connection}
-                                 
+
                                 } = State0, N) ->
     Tracker = proplists:get_value(session_tickets_tracker, Trackers),
     #{security_parameters := SecParamsR} =
         ssl_record:current_connection_state(ConnectionStates, read),
     #security_parameters{prf_algorithm = HKDF,
-                         resumption_master_secret = RMS} = SecParamsR, 
+                         resumption_master_secret = RMS} = SecParamsR,
     Ticket = tls_server_session_ticket:new(Tracker, HKDF, RMS),
     {State, _} = Connection:send_handshake(Ticket, State0),
     maybe_send_session_ticket(State, N - 1).
@@ -1940,16 +1953,19 @@ update_start_state(State, Map) ->
     SelectedSignAlg = maps:get(sign_alg, Map, undefined),
     PeerPublicKey = maps:get(peer_public_key, Map, undefined),
     ALPNProtocol = maps:get(alpn, Map, undefined),
+    StatusRequest = maps:get(status_request, Map, undefined),
     update_start_state(State, Cipher, KeyShare, SessionId,
                        Group, SelectedSignAlg, PeerPublicKey,
-                       ALPNProtocol).
+                       ALPNProtocol, StatusRequest).
 %%
 update_start_state(#state{connection_states = ConnectionStates0,
                           handshake_env = #handshake_env{} = HsEnv,
+                          protocol_specific = ProtocolSpecific0,
                           connection_env = CEnv,
                           session = Session} = State,
                    Cipher, KeyShare, SessionId,
-                   Group, SelectedSignAlg, PeerPublicKey, ALPNProtocol) ->
+                   Group, SelectedSignAlg, PeerPublicKey, ALPNProtocol,
+                   StatusRequest) ->
     #{security_parameters := SecParamsR0} = PendingRead =
         maps:get(pending_read, ConnectionStates0),
     #{security_parameters := SecParamsW0} = PendingWrite =
@@ -1959,9 +1975,11 @@ update_start_state(#state{connection_states = ConnectionStates0,
     ConnectionStates =
         ConnectionStates0#{pending_read => PendingRead#{security_parameters => SecParamsR},
                            pending_write => PendingWrite#{security_parameters => SecParamsW}},
+    ProtocolSpecific = ProtocolSpecific0#{status_request => StatusRequest},
     State#state{connection_states = ConnectionStates,
                 handshake_env = HsEnv#handshake_env{alpn = ALPNProtocol},
                 key_share = KeyShare,
+                protocol_specific = ProtocolSpecific,
                 session = Session#session{session_id = SessionId,
                                           ecc = Group,
                                           sign_alg = SelectedSignAlg,
@@ -2475,7 +2493,7 @@ get_certificate_authorities(undefined) ->
     [].
 
 get_supported_groups(undefined = Groups) ->
-    {error, ?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER, {supported_groups, Groups})}; 
+    {error, ?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER, {supported_groups, Groups})};
 get_supported_groups(#supported_groups{supported_groups = Groups}) ->
     {ok, Groups}.
 
@@ -2521,7 +2539,7 @@ handle_pre_shared_key(#state{ssl_options = #{session_tickets := disabled}}, _, _
     {ok, undefined};
 handle_pre_shared_key(#state{ssl_options = #{session_tickets := Tickets},
                              handshake_env = #handshake_env{tls_handshake_history =  {HHistory, _}},
-                             static_env = #static_env{trackers = Trackers}}, 
+                             static_env = #static_env{trackers = Trackers}},
                       OfferedPreSharedKeys, Cipher) when Tickets =/= disabled ->
     Tracker = proplists:get_value(session_tickets_tracker, Trackers),
     #{prf := CipherHash} = ssl_cipher_format:suite_bin_to_map(Cipher),
@@ -2939,11 +2957,11 @@ path_validation(TrustedCert, Path, ServerName, Role, CertDbHandle, CertDbRef, CR
                   log_level := LogLevel,
                   signature_algs := SignAlgos,
                   signature_algs_cert := SignAlgosCert,
-                  depth := Depth}, 
+                  depth := Depth},
                 #{cert_ext := CertExt,
                   ocsp_responder_certs := OcspResponderCerts,
                   ocsp_state := OcspState}) ->
-    ValidationFunAndState = 
+    ValidationFunAndState =
         ssl_handshake:validation_fun_and_state(VerifyFun, #{role => Role,
                                                             certdb => CertDbHandle,
                                                             certdb_ref => CertDbRef,
@@ -2953,14 +2971,14 @@ path_validation(TrustedCert, Path, ServerName, Role, CertDbHandle, CertDbRef, CR
                                                             crl_check => CrlCheck,
                                                             crl_db => CRLDbHandle,
                                                             signature_algs => filter_tls13_algs(SignAlgos),
-                                                            signature_algs_cert => 
+                                                            signature_algs_cert =>
                                                                 filter_tls13_algs(SignAlgosCert),
                                                             version => Version,
                                                             issuer => TrustedCert,
                                                             cert_ext => CertExt,
                                                             ocsp_responder_certs => OcspResponderCerts,
                                                             ocsp_state => OcspState
-                                                           }, 
+                                                           },
                                                Path, LogLevel),
     Options = [{max_path_length, Depth},
                {verify_fun, ValidationFunAndState}],
@@ -3089,3 +3107,26 @@ plausible_missing_chain([_] = EncodedChain, undefined, SignAlg, Key, Session0) -
                     };
 plausible_missing_chain(_,Plausible,_,_,_) ->
     Plausible.
+
+default_cert_key_pair_return(undefined, Session) ->
+    Session;
+default_cert_key_pair_return(Default, _) ->
+    Default.
+
+maybe_add_certificate_entry_extensions(
+  [ServerCertEntry = #certificate_entry{} | Rest],
+  #{ status_request := #certificate_status_request{} = Req
+   , certificate_status := #certificate_status{} = Status
+   }) ->
+    [ ServerCertEntry#certificate_entry{
+        extensions =
+            #{ status_request =>
+                   Req#certificate_status_request{
+                     status_type = ?CERTIFICATE_STATUS_TYPE_OCSP,
+                     request = Status
+                    }
+             }
+       }
+    | Rest];
+maybe_add_certificate_entry_extensions(CertList, _CRContext) ->
+    CertList.

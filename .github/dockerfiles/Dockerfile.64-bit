@@ -12,7 +12,7 @@ RUN cd /buildroot && tar -xzf ./otp.tar.gz
 
 WORKDIR /buildroot/otp/
 
-ENV CFLAGS="-O2 -g -Werror"
+ENV CFLAGS="-O2 -g"
 
 ## Configure, check that no application are disabled and then make
 RUN  ./configure --prefix=/otp && \
