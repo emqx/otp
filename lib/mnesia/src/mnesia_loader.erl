@@ -966,7 +966,16 @@ get_chunk_func(Pid, Tab, {ext, Alias, Mod}, RemoteS) ->
 get_chunk_func(Pid, Tab, Storage, RemoteS) ->
     try
         TabSize = mnesia:table_info(Tab, size),
-        KeysPerTransfer = calc_nokeys(Storage, Tab),
+        KeysPerTransfer =
+            case ?catch_val(send_table_batch_size) of
+                {'EXIT', _} ->
+                    mnesia_lib:set(send_table_batch_size, 0),
+                    calc_nokeys(Storage, Tab);
+                0 ->
+                    calc_nokeys(Storage, Tab);
+                Val when is_integer(Val) ->
+                    Val
+            end,
         ChunkData = dets:info(Tab, bchunk_format),
         UseDetsChunk =
             Storage == RemoteS andalso

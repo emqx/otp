@@ -115,8 +115,8 @@
         recvtclass |
         recvttl |
         pktoptions |
-	ipv6_v6only |
-    ipv6_probe.
+        ipv6_v6only |
+        ipv6_probe.
 -type connect_option() ::
         {fd, Fd :: non_neg_integer()} |
         inet:address_family() |
@@ -233,7 +233,7 @@ connect(Address, Port, Opts0, Timeout) ->
             GenTcpMod:connect(Address, Port, Opts, Timeout)
     end.
 
-connect_maybe_ipv6(Address, Port, Opts, Time, TryIpv6, Ipv6T) ->
+connect_maybe_ipv6(Address, Port, Opts, Timeout, TryIpv6, Ipv6T) ->
     case maybe_ipv6(Address, Opts, TryIpv6) of
         {maybe, NewOpts} when TryIpv6 ->
             try
@@ -241,14 +241,14 @@ connect_maybe_ipv6(Address, Port, Opts, Time, TryIpv6, Ipv6T) ->
             catch
                 _ : _ ->
                     %% fallback
-                    connect_0(Address, Port, Opts, Time)
+                    connect_0(Address, Port, Opts, Timeout)
             end;
         NewOpts ->
-            connect_0(Address, Port, NewOpts, Time)
+            connect_0(Address, Port, NewOpts, Timeout)
     end.
 
-connect_0(Address, Port, Opts, Time) ->
-    Timer = inet:start_timer(Time),
+connect_0(Address, Port, Opts, Timeout) ->
+    Timer = inet:start_timer(Timeout),
     Res = (catch connect1(Address,Port,Opts,Timer)),
     _ = inet:stop_timer(Timer),
     case Res of
@@ -258,6 +258,9 @@ connect_0(Address, Port, Opts, Time) ->
         Error -> Error
     end.
 
+maybe_ipv6({local, _}, Opts, _TryIpv6) ->
+    %% unapplicable to local sockets
+    Opts;
 maybe_ipv6(Host, Opts, TryIpv6) ->
     case lists:member(inet, Opts) orelse lists:member(inet6, Opts) of
         true ->
@@ -272,8 +275,8 @@ maybe_ipv6(Host, Opts, TryIpv6) ->
             Opts
     end.
 
-maybe_ipv6_1(Host, Opts) when tuple_size(Host) =:= 4 -> Opts;
-maybe_ipv6_1(Host, Opts) when tuple_size(Host) =:= 8 -> [inet6 | Opts].
+maybe_ipv6_1(Ip, Opts) when tuple_size(Ip) =:= 4 -> Opts;
+maybe_ipv6_1(Ip, Opts) when tuple_size(Ip) =:= 8 -> [inet6 | Opts].
 
 maybe_ipv6_2(Host, Opts) ->
     case inet:parse_address(Host) of

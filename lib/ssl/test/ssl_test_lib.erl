@@ -2274,6 +2274,7 @@ start_client(openssl, Port, ClientOpts, Config) ->
     SNI = openssl_sni(proplists:get_value(server_name_indication, ClientOpts, undefined)),
     OCSPStatus = openssl_ocsp_status(proplists:get_value(ocsp_stapling, ClientOpts, undefined)),
     Debug = openssl_debug_options(DOpenssl),
+    OCSPStatus = openssl_ocsp_status(proplists:get_value(ocsp_stapling, ClientOpts, undefined)),
 
     Exe = "openssl",
     Args0 =  case Groups0 of
@@ -2461,6 +2462,14 @@ openssl_debug_options(true) ->
     ["-msg", "-debug"];
 openssl_debug_options(false) ->
     [].
+
+openssl_ocsp_status(undefined) ->
+    [];
+openssl_ocsp_status(true) ->
+    ["-status"];
+openssl_ocsp_status(false) ->
+    [].
+
 %%
 openssl_debug_options(PrivDir, true) ->
     case is_keylogfile_supported() of

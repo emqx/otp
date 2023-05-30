@@ -1519,6 +1519,7 @@ handle_options(Transport, Socket, Opts0, Role, Host) ->
                             rules => ?RULES}),
 
     SslOpts = maps:without([warn_verify_none], SslOpts2),
+
     %% Handle special options
     {Sock, Emulated} = emulated_options(Transport, Socket, Protocol, SockOpts0),
     ConnetionCb = connection_cb(Protocol),
