@@ -3108,11 +3108,6 @@ plausible_missing_chain([_] = EncodedChain, undefined, SignAlg, Key, Session0) -
 plausible_missing_chain(_,Plausible,_,_,_) ->
     Plausible.
 
-default_cert_key_pair_return(undefined, Session) ->
-    Session;
-default_cert_key_pair_return(Default, _) ->
-    Default.
-
 maybe_add_certificate_entry_extensions(
   [ServerCertEntry = #certificate_entry{} | Rest],
   #{ status_request := #certificate_status_request{} = Req
