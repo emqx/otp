@@ -357,7 +357,6 @@
                                        certfile => cert_pem(),
                                        keyfile => key_pem(),
                                        password => key_pem_password()}.
--type key_password()              :: string() | fun(() -> string()).
 -type cipher_suites()             :: ciphers().
 -type ciphers()                   :: [erl_cipher_suite()] |
                                      string(). % (according to old API) exported
