@@ -74,8 +74,32 @@ do_post_commit(Tid, Commit) ->
                           , schema_ops => SchemaOps
                           },
             try Fun(Tid, CommitData)
-            catch EC:Err:Stack ->
-                    mnesia_lib:error("Mnesia post_commit hook failed: ~p:~p~nStacktrace:~p~n", [EC, Err, Stack])
+            catch EC:Err:St ->
+                    CommitTabs = commit_tabs(Ram, Disc, DiscOnly, Ext),
+                    mnesia_lib:error("Mnesia post_commit hook failed: ~p:~p~nStacktrace:~p~nCommit tables:~p~n",
+                                     [EC, Err, stack_without_args(St), CommitTabs])
             end,
             ok
     end.
+
+%% May be helpful for debugging
+commit_tabs(Ram, Disc, DiscOnly, Ext) ->
+    Acc = tabs_from_ops(Ram, []),
+    Acc1 = tabs_from_ops(Disc, Acc),
+    Acc2 = tabs_from_ops(DiscOnly, Acc1),
+    lists:uniq(tabs_from_ops(Ext, Acc2)).
+
+tabs_from_ops([{{Tab, _K}, _Val, _Op} | T], Acc) ->
+    tabs_from_ops(T, [Tab | Acc]);
+tabs_from_ops([_ | T], Acc) ->
+    tabs_from_ops(T, Acc);
+tabs_from_ops([], Acc) ->
+    Acc.
+
+%% Args may contain sensitive data
+stack_without_args([{M, F, Args, Info} | T]) when is_list(Args) ->
+    [{M, F, length(Args), Info} | stack_without_args(T)];
+stack_without_args([StItem | T] ) ->
+    [StItem | stack_without_args(T)];
+stack_without_args([]) ->
+    [].
