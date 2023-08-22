@@ -76,8 +76,8 @@ do_post_commit(Tid, Commit) ->
             try Fun(Tid, CommitData)
             catch EC:Err:St ->
                     CommitTabs = commit_tabs(Ram, Disc, DiscOnly, Ext),
-                    mnesia_lib:error("Mnesia post_commit hook failed: ~p:~p~nStacktrace:~p~nCommit tables:~p~n",
-                                     [EC, Err, stack_without_args(St), CommitTabs])
+                    mnesia_lib:dbg_out("Mnesia post_commit hook failed: ~p:~p~nStacktrace:~p~nCommit tables:~p~n",
+                                       [EC, Err, stack_without_args(St), CommitTabs])
             end,
             ok
     end.
