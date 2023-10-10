@@ -726,10 +726,14 @@ handle_state_timeout(flight_retransmission_timeout, StateName,
                                 #{flight_state := {retransmit, _NextTimeout}}} = State0) ->
     {State1, Actions0} = dtls_gen_connection:send_handshake_flight(State0, 
                                                                    retransmit_epoch(StateName, State0)),
-    {next_state, StateName, State, Actions} = 
-        dtls_gen_connection:next_event(StateName, no_record, State1, Actions0),
+    {State3, Actions3} = case dtls_gen_connection:next_event(StateName, no_record, State1, Actions0) of
+        {next_state, StateName, State2, Actions1} ->
+            {State2, Actions1};
+        {next_state, StateName, State2} ->
+            {State2, []}
+    end,
     %% This will reset the retransmission timer by repeating the enter state event
-    {repeat_state, State, Actions}.
+    {repeat_state, State3, Actions3}.
 
 alert_or_reset_connection(Alert, StateName, #state{connection_states = Cs} = State) ->
     case maps:get(previous_cs, Cs, undefined) of
