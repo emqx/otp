@@ -1,6 +1,9 @@
 %% -*- erlang -*-
 {"%VSN%",
 [
+  {"10.7.3.2", [
+    {load_module,dtls_connection,brutal_purge,soft_purge,[]}
+  ]},
   {<<"10\\..*">>, [{restart_application, ssl}]},
   {<<"9\\..*">>, [{restart_application, ssl}]},
   {<<"8\\..*">>, [{restart_application, ssl}]},
@@ -11,6 +14,9 @@
   {<<"3\\..*">>, [{restart_application, ssl}]}
  ], 
  [
+  {"10.7.3.2", [
+    {load_module,dtls_connection,brutal_purge,soft_purge,[]}
+  ]},
   {<<"10\\..*">>, [{restart_application, ssl}]},
   {<<"9\\..*">>, [{restart_application, ssl}]},
   {<<"8\\..*">>, [{restart_application, ssl}]},
