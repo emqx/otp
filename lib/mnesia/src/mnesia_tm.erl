@@ -1950,7 +1950,7 @@ commit_del_object([H|R], Tid, Storage, Tab, K, Obj) when element(1, H) == index 
 
 commit_clear([], _, _, _, _, _) ->  ok;
 commit_clear([{checkpoints, CpList}|R], Tid, Storage, Tab, K, Obj) ->
-    mnesia_checkpoint:tm_retain(Tid, Tab, K, clear_table, CpList),
+    mnesia_checkpoint:tm_retain(Tid, Tab, K, clear_table, CpList, Obj),
     commit_clear(R, Tid, Storage, Tab, K, Obj);
 commit_clear([H|R], Tid, Storage, Tab, K, Obj)
   when element(1, H) == subscribers ->

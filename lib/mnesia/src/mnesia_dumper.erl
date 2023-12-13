@@ -404,8 +404,12 @@ dets_insert(Op,Tab,Key,Val, Storage0) ->
 	    dets_updated(Tab,Key),
 	    mnesia_lib:db_match_erase(Storage, Tab, Val);
 	clear_table ->
-	    dets_cleared(Tab),
-	    ok = mnesia_lib:db_match_erase(Storage, Tab, '_')
+            %% Val is a match_delete pattern
+            case Val of
+                '_' -> dets_cleared(Tab);
+                _ -> dets_updated(Tab, Val)
+            end,
+	    ok = mnesia_lib:db_match_erase(Storage, Tab, Val)
     end.
 
 dets_updated(Tab,Key) ->

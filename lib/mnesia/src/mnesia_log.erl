@@ -1024,9 +1024,15 @@ add_recs([LogH|Rest], N)
        LogH#log_header.log_kind == dcl_log,
        LogH#log_header.log_version >= "1.0" ->
     add_recs(Rest, N);
-add_recs([{{Tab, _Key}, _Val, clear_table} | Rest], N) ->
+add_recs([{{Tab, _Key}, '_', clear_table} | Rest], N) ->
     Size = ets:info(Tab, size),
     true = ets:delete_all_objects(Tab),
+    add_recs(Rest, N+Size);
+add_recs([{{Tab, _Key}, Pattern, clear_table} | Rest], N) ->
+    %% It's possible to count the number of matched records,
+    %% but the total count seems to be eventually ignored in all places where it's used.
+    Size = 1,
+    true = ets:match_delete(Tab, Pattern),
     add_recs(Rest, N+Size);
 add_recs([], N) ->
     N.

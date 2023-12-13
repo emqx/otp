@@ -30,6 +30,7 @@
 	 tm_prepare/1,
 	 tm_retain/4,
 	 tm_retain/5,
+	 tm_retain/6,
 	 tm_enter_pending/1,
 	 tm_enter_pending/3,
 	 tm_exit_pending/1
@@ -148,7 +149,6 @@ enter_still_pending([Tid | Tids], Tab) ->
 enter_still_pending([], _Tab) ->
     ok.
 
-
 %% Looks up checkpoints for functions in mnesia_tm.
 tm_retain(Tid, Tab, Key, Op) ->
     case val({Tab, commit_work}) of
@@ -157,11 +157,14 @@ tm_retain(Tid, Tab, Key, Op) ->
 	_ -> 
 	    undefined
     end.
-    
+
 tm_retain(Tid, Tab, Key, Op, Checkpoints) ->
+    tm_retain(Tid, Tab, Key, Op, Checkpoints, '_').
+
+tm_retain(Tid, Tab, Key, Op, Checkpoints, Obj) ->
     case Op of
 	clear_table ->
-	    OldRecs = mnesia_lib:db_match_object(Tab, '_'),
+	    OldRecs = mnesia_lib:db_match_object(Tab, Obj),
 	    send_group_retain(OldRecs, Checkpoints, Tid, Tab, []),
 	    OldRecs;
 	_ ->

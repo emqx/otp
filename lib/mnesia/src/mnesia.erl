@@ -99,6 +99,7 @@
 	 read_table_property/2, write_table_property/2, delete_table_property/2,
 	 change_table_frag/2,
 	 clear_table/1, clear_table/4,
+         match_delete/2,
 
 	 %% Table load
 	 dump_tables/1, wait_for_tables/2, force_load_table/1,
@@ -2808,21 +2809,25 @@ change_table_copy_type(T, N, S) ->
 
 -spec clear_table(Tab::table()) -> t_result('ok').
 clear_table(Tab) ->
+    match_delete(Tab, '_').
+
+-spec match_delete(Tab::table(), ets:match_pattern()) -> t_result('ok').
+match_delete(Tab, Pattern) ->
     case get(mnesia_activity_state) of
 	State = {Mod, Tid, _Ts} when element(1, Tid) =/= tid ->
-	    transaction(State, fun() -> do_clear_table(Tab) end, [], infinity, Mod, sync);
+	    transaction(State, fun() -> do_clear_table(Tab, Pattern) end, [], infinity, Mod, sync);
 	undefined ->
-	    transaction(undefined, fun() -> do_clear_table(Tab) end, [], infinity, ?DEFAULT_ACCESS, sync);
+	    transaction(undefined, fun() -> do_clear_table(Tab, Pattern) end, [], infinity, ?DEFAULT_ACCESS, sync);
 	_ -> %% Not allowed for clear_table
 	    mnesia:abort({aborted, nested_transaction})
     end.
 
-do_clear_table(Tab) ->
+do_clear_table(Tab, Pattern) ->
     case get(mnesia_activity_state) of
 	{?DEFAULT_ACCESS, Tid, Ts}  ->
-	    clear_table(Tid, Ts, Tab, '_');
+	    clear_table(Tid, Ts, Tab, Pattern);
 	{Mod, Tid, Ts} ->
-	    Mod:clear_table(Tid, Ts, Tab, '_');
+	    Mod:clear_table(Tid, Ts, Tab, Pattern);
 	_ ->
 	    abort(no_transaction)
     end.
