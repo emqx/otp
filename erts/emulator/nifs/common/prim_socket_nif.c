@@ -2405,6 +2405,7 @@ ERL_NIF_TERM esock_atom_socket_tag; // This has a "special" name ('$socket')
     LOCAL_ATOM_DECL(nread);            \
     LOCAL_ATOM_DECL(nspace);           \
     LOCAL_ATOM_DECL(nwrite);           \
+    LOCAL_ATOM_DECL(outq);             \
     LOCAL_ATOM_DECL(null);             \
     LOCAL_ATOM_DECL(num_acceptors);    \
     LOCAL_ATOM_DECL(num_cnt_bits);     \
@@ -4879,6 +4880,10 @@ ERL_NIF_TERM esock_supports_ioctl_requests(ErlNifEnv* env)
 
 #if defined(FIONSPACE)
   requests = MKC(env, MKT2(env, atom_nspace, MKUL(env, FIONSPACE)), requests);
+#endif
+
+#if defined(TIOCOUTQ)
+  requests = MKC(env, MKT2(env, atom_outq, MKUL(env, TIOCOUTQ)), requests);
 #endif
 
 #if defined(SIOCATMARK)
