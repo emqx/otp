@@ -11917,12 +11917,16 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 
     sz = driver_peekqv(desc->inet.port, &iov);
 
-    if (sz > 0)
-    {
+    if (0 == sz)
+        // this returns {error, ''}
+        return ctl_reply(INET_REP_ERROR, NULL, 0, rbuf, rsize);
+    else {
         driver_outputv(desc->inet.port, "?unsend?", sizeof("?unsend?"), &iov, 0);
+        // We flush the queue, so no more writes/flush to the OS socket
+        sz = driver_deq(desc->inet.port, sz);
+        ASSERT(0 == driver_sizeq(desc->inet.port));
+        return ctl_reply(INET_REP_OK, NULL, 0, rbuf, rsize);
     }
-
-	return ctl_reply(sz?INET_REP_OK:INET_REP_ERROR, NULL, 0, rbuf, rsize);
     }
 
     case TCP_REQ_SHUTDOWN: {
