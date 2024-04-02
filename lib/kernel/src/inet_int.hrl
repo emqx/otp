@@ -102,6 +102,7 @@
 -define(TCP_REQ_UNRECV,         43).
 -define(TCP_REQ_SHUTDOWN,       44).
 -define(TCP_REQ_SENDFILE,       45).
+-define(TCP_REQ_UNSEND,         46).
 
 %% UDP and SCTP requests
 -define(PACKET_REQ_RECV,        60).

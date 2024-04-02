@@ -816,6 +816,7 @@ static size_t my_strnlen(const char *s, size_t maxlen)
 #define TCP_REQ_UNRECV         43
 #define TCP_REQ_SHUTDOWN       44
 #define TCP_REQ_SENDFILE       45
+#define TCP_REQ_UNSEND         46
 /* UDP and SCTP requests */
 #define PACKET_REQ_RECV        60 /* Common for UDP and SCTP         */
 /* #define SCTP_REQ_LISTEN       61 MERGED Different from TCP; not for UDP */
@@ -11904,6 +11905,29 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	return ctl_reply(INET_REP_OK, NULL, 0, rbuf, rsize);
     }
 
+    case TCP_REQ_UNSEND: {
+    ErlIOVec iov;
+    ErlDrvSizeT sz;
+
+	DDBG(INETP(desc),
+	     ("INET-DRV-DBG[%d][" SOCKET_FSTR ",%T] tcp_inet_ctl -> UNSEND\r\n",
+	      __LINE__, desc->inet.s, driver_caller(desc->inet.port)) );
+	if (!IS_CONNECTED(INETP(desc)))
+   	    return ctl_error(ENOTCONN, rbuf, rsize);
+
+    sz = driver_peekqv(desc->inet.port, &iov);
+
+    if (0 == sz)
+        // this returns {error, ''}
+        return ctl_reply(INET_REP_ERROR, NULL, 0, rbuf, rsize);
+    else {
+        driver_outputv(desc->inet.port, "?unsend?", sizeof("?unsend?"), &iov, 0);
+        // We flush the queue, so no more writes/flush to the OS socket
+        sz = driver_deq(desc->inet.port, sz);
+        ASSERT(0 == driver_sizeq(desc->inet.port));
+        return ctl_reply(INET_REP_OK, NULL, 0, rbuf, rsize);
+    }
+    }
 
     case TCP_REQ_SHUTDOWN: {
 	int how;

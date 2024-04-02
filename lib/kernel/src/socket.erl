@@ -4443,7 +4443,7 @@ peername(Socket) ->
       Socket :: socket(),
       Reason :: posix() | 'closed';
 
-           (Socket, GetRequest :: 'nread' | 'nwrite' | 'nspace') ->
+           (Socket, GetRequest :: 'nread' | 'nwrite' | 'outq' | 'nspace') ->
           {'ok', NumBytes :: non_neg_integer()} | {'error', Reason} when
       Socket :: socket(),
       Reason :: posix() | 'closed';
@@ -4458,12 +4458,13 @@ peername(Socket) ->
       Socket :: socket(),
       Reason :: posix() | 'closed'.
 
-%% gifconf | nread | nwrite | nspace | atmark |
+%% gifconf | nread | nwrite | nspace | outq | atmark |
 %% {gifaddr, string()} | {gifindex, string()} | {gifname, integer()}
 ioctl(?socket(SockRef), gifconf = GetRequest) ->
     prim_socket:ioctl(SockRef, GetRequest);
 ioctl(?socket(SockRef), GetRequest) when (nread =:= GetRequest) orelse
                                          (nwrite =:= GetRequest) orelse
+                                         (outq =:= GetRequest) orelse
                                          (nspace =:= GetRequest) ->
     prim_socket:ioctl(SockRef, GetRequest);
 ioctl(?socket(SockRef), GetRequest) when (atmark =:= GetRequest) ->
