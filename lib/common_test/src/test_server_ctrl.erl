@@ -5832,6 +5832,7 @@ encoding(File) ->
 
 check_repeat_testcase(Case,Result,Cases,
                       [{Ref,[{repeat,RepeatData0}],StartTime}|Mode0]) ->
+    maybe_report_flaky_test(Case, RepeatData0),
     case do_update_repeat_data(Result,RepeatData0) of
         false ->
             {Cases,Mode0};
@@ -5872,6 +5873,16 @@ report_repeat_testcase(M,forever) ->
     print(minor, "~n=== Repeated test case: ~w of infinity", [M]);
 report_repeat_testcase(M,N) ->
     print(minor, "~n=== Repeated test case: ~w of ~w", [M,N]).
+
+maybe_report_flaky_test({Mod, Func, _Args}, {flaky,N,_Max}) ->
+    case N > 1 of
+        true ->
+            print(minor, "~n=== FLAKY test case: ~w:~w", [Mod, Func]);
+        false ->
+            ok
+    end;
+maybe_report_flaky_test(_TestCase, _RepeatInfo) ->
+    ok.
 
 maybe_put_flaky_info([{_Ref, [{repeat, {flaky, N, M}}], _Time} | _]) ->
     put('$ct_flaky_info', {N, M});
