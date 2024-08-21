@@ -1024,9 +1024,14 @@ add_recs([LogH|Rest], N)
        LogH#log_header.log_kind == dcl_log,
        LogH#log_header.log_version >= "1.0" ->
     add_recs(Rest, N);
-add_recs([{{Tab, _Key}, _Val, clear_table} | Rest], N) ->
+add_recs([{{Tab, _Key}, '_', clear_table} | Rest], N) ->
     Size = ets:info(Tab, size),
     true = ets:delete_all_objects(Tab),
     add_recs(Rest, N+Size);
+add_recs([{{Tab, _Key}, Pattern, clear_table} | Rest], N) ->
+    SizeBefore = ets:info(Tab, size),
+    true = ets:match_delete(Tab, Pattern),
+    SizeAfter = ets:info(Tab, size),
+    add_recs(Rest, N+SizeBefore-SizeAfter);
 add_recs([], N) ->
     N.

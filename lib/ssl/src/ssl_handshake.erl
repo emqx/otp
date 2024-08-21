@@ -595,6 +595,9 @@ encode_handshake(#certificate_request{certificate_types = CertTypes,
        <<?BYTE(CertTypesLen), CertTypes/binary,
 	?UINT16(CertAuthsLen), EncCertAuths/binary>>
     };
+encode_handshake(#certificate_status{status_type = StatusType, response = Response}, _Version) ->
+    Size = byte_size(Response),
+    {?CERTIFICATE_STATUS, <<?BYTE(StatusType), ?UINT24(Size), Response/binary>>};
 encode_handshake(#server_hello_done{}, _Version) ->
     {?SERVER_HELLO_DONE, <<>>};
 encode_handshake(#client_key_exchange{exchange_keys = ExchangeKeys}, _Version) ->
@@ -798,7 +801,13 @@ encode_cert_status_req(
         request_extensions = ReqExtns}) ->
     ResponderIDListBin = encode_responderID_list(ResponderIDList),
     ReqExtnsBin = encode_request_extensions(ReqExtns),
-    <<?BYTE(StatusType), ResponderIDListBin/binary, ReqExtnsBin/binary>>.
+    <<?BYTE(StatusType), ResponderIDListBin/binary, ReqExtnsBin/binary>>;
+encode_cert_status_req(_StatusType, #certificate_status{} = Status) ->
+    Version = {3, 4},
+    {_, EncStatus} = encode_handshake(Status, Version),
+    EncStatus;
+encode_cert_status_req(_StatusType, _Value) ->
+    <<>>.
 
 encode_responderID_list([]) ->
     <<?UINT16(0)>>;
@@ -1496,7 +1505,8 @@ handle_client_hello_extensions(RecordCB, Random, ClientCipherSuites,
                                    ec_point_formats => server_ecc_extension(Version, 
                                                                             maps:get(ec_point_formats, Exts, undefined)),
                                    use_srtp => use_srtp_ext(Opts),
-                                   max_frag_enum => ServerMaxFragEnum
+                                   max_frag_enum => ServerMaxFragEnum,
+                                   status_request => handle_status_request(Opts, Exts)
                                   },
     
     %% If we receive an ALPN extension and have ALPN configured for this connection,
@@ -1567,6 +1577,19 @@ handle_server_hello_extensions(RecordCB, Random, CipherSuite, Compression,
                 [_|_] ->
                     ?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, too_many_protocols_in_server_hello)
             end
+    end.
+
+handle_status_request(SSLOptions, ClientExtensions) ->
+    case {SSLOptions, ClientExtensions} of
+        { #{certificate_status := #certificate_status{}}
+        , #{status_request := #certificate_status_request{}}
+        } ->
+            #certificate_status_request{
+               status_type = ?CERTIFICATE_STATUS_TYPE_OCSP,
+               request = <<>>
+              };
+        _ ->
+            undefined
     end.
 
 select_curve(Client, Server) ->
@@ -3078,6 +3101,11 @@ decode_extensions(<<?UINT16(?STATUS_REQUEST), ?UINT16(Len),
           ASN1OCSPResponse:OCSPLen/binary>> ->
             decode_extensions(Rest, Version, MessageType,
                       Acc#{status_request => #certificate_status{response = ASN1OCSPResponse}});
+        <<?BYTE(?CERTIFICATE_STATUS_TYPE_OCSP),
+          ?UINT16(0),
+          ?UINT16(0)>> ->
+            decode_extensions(Rest, Version, MessageType,
+                              Acc#{status_request => #certificate_status_request{}});
         _Other ->
             decode_extensions(Rest, Version, MessageType, Acc)
     end;

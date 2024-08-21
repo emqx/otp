@@ -106,6 +106,9 @@
 %% Tracing
 -export([handle_trace/3]).
 
+%% EMQ fork
+-export([default_cacerts/0]).
+
 -removed({ssl_accept, '_', 
           "use ssl_handshake/1,2,3 instead"}).
 -removed({cipher_suites, 0, 
@@ -462,7 +465,7 @@
 -type client_reuse_session()     :: session_id() | {session_id(), SessionData::binary()}.
 -type client_reuse_sessions()    :: boolean() | save.
 -type client_certificate_authorities()  :: boolean().
--type client_cacerts()           :: [public_key:der_encoded()] | [public_key:combined_cert()].
+-type client_cacerts()           :: system_defaults | [public_key:der_encoded()] | [public_key:combined_cert()].
 -type client_cafile()            :: file:filename().
 -type app_level_protocol()       :: binary().
 -type client_alpn()              :: [app_level_protocol()].
@@ -508,7 +511,7 @@
                                 {early_data, server_early_data()} |
                                 {use_srtp, use_srtp()}.
 
--type server_cacerts()           :: [public_key:der_encoded()] | [public_key:combined_cert()].
+-type server_cacerts()           :: system_defaults | [public_key:der_encoded()] | [public_key:combined_cert()].
 -type server_cafile()            :: file:filename().
 -type server_alpn()              :: [app_level_protocol()].
 -type server_next_protocol()     :: [app_level_protocol()].
@@ -570,6 +573,20 @@
 %%%--------------------------------------------------------------------
 %%% API
 %%%--------------------------------------------------------------------
+
+%% This function is added in EMQ's OTP fork until the upstream provides a similar solution.
+%% The application code can be implement like:
+%%
+%% default_cacerts() ->
+%%     try
+%%         ssl:default_cacerts()
+%%     catch
+%%         _:_ ->
+%%             public_key:cacerts_get()
+%%     end.
+-spec default_cacerts() -> system_defaults.
+default_cacerts() ->
+    system_defaults.
 
 %%--------------------------------------------------------------------
 %%
@@ -1656,6 +1673,7 @@ ssl_options() ->
      middlebox_comp_mode,
      max_fragment_length,
      next_protocol_selector,  next_protocols_advertised,
+     certificate_status,
      ocsp_stapling, ocsp_responder_certs, ocsp_nonce,
      padding_check,
      partial_chain,
@@ -1689,10 +1707,11 @@ update_options(Opts, Role, InheritedSslOpts) when is_map(InheritedSslOpts) ->
     {UserSslOpts, _} = split_options(Opts, ssl_options()),
     process_options(UserSslOpts, InheritedSslOpts, #{role => Role}).
 
-process_options(UserSslOpts, SslOpts0, Env) ->
+process_options(UserSslOpts, SslOpts00, Env) ->
     %% Reverse option list so we get the last set option if set twice,
     %% users depend on it.
     UserSslOptsMap = proplists:to_map(lists:reverse(UserSslOpts)),
+    SslOpts0  = opt_certificate_status(UserSslOptsMap, SslOpts00, Env),
     SslOpts1  = opt_protocol_versions(UserSslOptsMap, SslOpts0, Env),
     SslOpts2  = opt_verification(UserSslOptsMap, SslOpts1, Env),
     SslOpts3  = opt_certs(UserSslOptsMap, SslOpts2, Env),
@@ -1978,8 +1997,13 @@ check_cert_key(UserOpts, CertKeys, LogLevel) ->
 
 opt_cacerts(UserOpts, #{verify := Verify, log_level := LogLevel, versions := Versions} = Opts,
             #{role := Role}) ->
-    {_, CaCerts} = get_opt_list(cacerts, undefined, UserOpts, Opts),
-
+    CaCerts = case get_opt(cacerts, undefined, UserOpts, Opts) of
+                  {_, system_defaults} ->
+                      public_key:cacerts_get();
+                  _ ->
+                    {_, CaCerts0} = get_opt_list(cacerts, undefined, UserOpts, Opts),
+                    CaCerts0
+              end,
     CaCertFile = case get_opt_file(cacertfile, <<>>, UserOpts, Opts) of
                      {Where1, _FileName} when CaCerts =/= undefined ->
                          warn_override(Where1, UserOpts, cacerts, [cacertfile], LogLevel),
@@ -2048,6 +2072,15 @@ opt_tickets(UserOpts, #{versions := Versions} = Opts, #{role := server}) ->
     assert_client_only(use_ticket, UserOpts),
     Opts#{session_tickets => SessionTickets, early_data => EarlyData,
           anti_replay => AntiReplay, stateless_tickets_seed => STS}.
+
+opt_certificate_status(UserOpts, Opts, #{role := _Role}) ->
+    {_, CertificateStatus} = get_opt(certificate_status, undefined, UserOpts, Opts),
+    case CertificateStatus of
+        undefined -> ok;
+        #certificate_status{} -> ok;
+        _Value -> option_error(certificate_status, CertificateStatus)
+    end,
+    Opts#{certificate_status => CertificateStatus}.
 
 opt_ocsp(UserOpts, #{versions := _Versions} = Opts, #{role := Role}) ->
     {Stapling, SMap} =

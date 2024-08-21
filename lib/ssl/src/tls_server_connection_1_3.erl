@@ -478,6 +478,7 @@ do_handle_client_hello(#client_hello{cipher_suites = ClientCiphers,
                          State2
                  end,
 
+        StatusRequest = maps:get(status_request, Extensions, undefined),
         State4 = tls_handshake_1_3:update_start_state(State3,
                                                       #{cipher => Cipher,
                                                         key_share => KeyShare,
@@ -486,7 +487,8 @@ do_handle_client_hello(#client_hello{cipher_suites = ClientCiphers,
                                                         sign_alg => SelectedSignAlg,
                                                         peer_public_key => ClientPubKey,
                                                         alpn => ALPNProtocol,
-                                                        random => Random}),
+                                                        random => Random,
+                                                        status_request => StatusRequest}),
 
         %% 4.1.4.  Hello Retry Request
         %%
@@ -832,11 +834,19 @@ maybe_send_certificate_request(#state{static_env = #static_env{protocol_cb = Con
 maybe_send_certificate(State, PSK) when  PSK =/= undefined ->
     {ok, State};
 maybe_send_certificate(#state{session = #session{own_certificates = OwnCerts},
+                              protocol_specific = ProtocolSpecific,
+                              ssl_options = SslOpts,
                               static_env = #static_env{
                                               protocol_cb = Connection,
                                               cert_db = CertDbHandle,
                                               cert_db_ref = CertDbRef}} = State, _) ->
-    case tls_handshake_1_3:certificate(OwnCerts, CertDbHandle, CertDbRef, <<>>, server) of
+    %% hack: apparently, CRContext is not used by the server (whatever that may be...)
+    StatusRequest = maps:get(status_request, ProtocolSpecific, undefined),
+    CertificateStatus = maps:get(certificate_status, SslOpts, undefined),
+    CRContext = #{ status_request => StatusRequest
+                 , certificate_status => CertificateStatus
+                 },
+    case tls_handshake_1_3:certificate(OwnCerts, CertDbHandle, CertDbRef, CRContext, server) of
         {ok, Certificate} ->
             {ok, Connection:queue_handshake(Certificate, State)};
         Error ->

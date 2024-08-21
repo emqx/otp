@@ -152,7 +152,7 @@ report_table_event(Tab, Tid, Obj, Op) ->
 report_table_event(Subscr, Tab, Tid, Obj, Op) ->
     report_table_event(Subscr, Tab, Tid, Obj, Op, undefined).
 
-report_table_event({subscribers, S1, S2}, Tab, Tid, _Obj, clear_table, _Old) ->
+report_table_event({subscribers, S1, S2}, Tab, Tid, '_' = _Obj, clear_table, _Old) ->
     What   = {delete, {schema, Tab}, Tid},
     deliver(S1, {mnesia_table_event, What}),
     TabDef = mnesia_schema:cs2list(?catch_val({Tab, cstruct})),
@@ -162,6 +162,15 @@ report_table_event({subscribers, S1, S2}, Tab, Tid, _Obj, clear_table, _Old) ->
     deliver(S2, {mnesia_table_event, What3}),
     What4  = {write, schema,  {schema, Tab, TabDef}, [], Tid},
     deliver(S2, {mnesia_table_event, What4});
+
+report_table_event({subscribers, S1, _S2}, Tab, Tid, Obj, clear_table, _Old) ->
+    %% Obj is a match pattern here.
+    %% Sending delete_object event is compatible with `mnesia_loader`,
+    %% that uses `db_match_erase/2` which actually removes records by pattern.
+    %% Extended event is omitted: it's possible to match and get `OldRecords`,
+    %% but the list can be quite large.
+    Standard = {delete_object, patch_record(Tab, Obj), Tid},
+    deliver(S1, {mnesia_table_event, Standard});
 
 report_table_event({subscribers, Subscr, []}, Tab, Tid, Obj, Op, _Old) ->
     What = {Op, patch_record(Tab, Obj), Tid},
