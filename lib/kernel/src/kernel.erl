@@ -96,6 +96,7 @@ init([]) ->
                type => worker,
                modules => [kernel_config]},
 
+
     RefC = #{id => kernel_refc,
              start => {kernel_refc, start_link, []},
              restart => permanent,
