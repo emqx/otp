@@ -6792,8 +6792,7 @@ schedule_out_process(ErtsRunQueue *c_rq, erts_aint32_t *statep, Process *p,
 
 static ERTS_INLINE void
 add2runq(int enqueue, erts_aint32_t prio,
-	 Process *proc, erts_aint32_t state,
-	 Process **proxy)
+	 Process *proc, erts_aint32_t state)
 {
     ErtsRunQueue *runq;
 
@@ -6805,12 +6804,7 @@ add2runq(int enqueue, erts_aint32_t prio,
 	if (enqueue < 0) { /* use proxy */
 	    Process *pxy;
 
-	    if (!proxy)
-		pxy = NULL;
-	    else {
-		pxy = *proxy;
-		*proxy = NULL;
-	    }
+	    pxy = NULL;
 	    sched_p = make_proxy_proc(pxy, proc, prio);
 	}
 
@@ -6945,7 +6939,7 @@ schedule_process(Process *p, erts_aint32_t in_state, ErtsProcLocks locks)
 					     &state,
 					     &enq_prio,
 					     locks);
-    add2runq(enqueue, enq_prio, p, state, NULL);
+    add2runq(enqueue, enq_prio, p, state);
 }
 
 void
@@ -7078,7 +7072,7 @@ active_sys_enqueue(Process *p, ErtsProcSysTask *sys_task,
     }
 
     if (!already_scheduled) {
-        add2runq(enqueue, enq_prio, p, n, NULL);
+        add2runq(enqueue, enq_prio, p, n);
     }
 
 cleanup:
@@ -7254,7 +7248,7 @@ resume_process(Process *p, ErtsProcLocks locks)
 					 &state,
 					 &enq_prio,
 					 locks);
-    add2runq(enqueue, enq_prio, p, state, NULL);
+    add2runq(enqueue, enq_prio, p, state);
 }
 
 
@@ -13446,7 +13440,7 @@ erts_set_self_exiting(Process *c_p, Eterm reason)
 
     erts_proc_unlock(c_p, ERTS_PROC_LOCKS_ALL_MINOR);
     if (enqueue)
-        add2runq(enqueue, enq_prio, c_p, state, NULL);
+        add2runq(enqueue, enq_prio, c_p, state);
 }
 
 static int
