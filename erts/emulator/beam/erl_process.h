@@ -782,11 +782,13 @@ void erts_non_empty_runq(ErtsRunQueue *rq);
 ERTS_GLB_INLINE void erts_inc_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio);
 ERTS_GLB_INLINE void erts_dec_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio);
 ERTS_GLB_INLINE void erts_reset_max_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi);
+ERTS_GLB_INLINE void erts_add_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio, unsigned n);
+ERTS_GLB_INLINE void erts_sub_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio, unsigned n);
 
 #if ERTS_GLB_INLINE_INCL_FUNC_DEF
 
 ERTS_GLB_INLINE void
-erts_inc_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio)
+erts_add_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio, unsigned n)
 {
     erts_aint32_t len;
 
@@ -796,7 +798,7 @@ erts_inc_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio)
 
     if (len == 0)
 	erts_non_empty_runq(rq);
-    len++;
+    len += n;
     if (rq->max_len < len)
 	rq->max_len = len;
     ASSERT(len > 0);
@@ -810,7 +812,7 @@ erts_inc_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio)
 	erts_atomic32_read_bor_nob(&rq->flags,
 				       (erts_aint32_t) (1 << prio));
     }
-    len++;
+    len += n;
     if (rqi->max_len < len)
 	rqi->max_len = len;
 
@@ -818,19 +820,25 @@ erts_inc_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio)
 }
 
 ERTS_GLB_INLINE void
-erts_dec_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio)
+erts_inc_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio)
+{
+    erts_add_runq_len(rq, rqi, prio, 1);
+}
+
+ERTS_GLB_INLINE void
+erts_sub_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio, unsigned n)
 {
     erts_aint32_t len;
 
     ERTS_LC_ASSERT(erts_lc_runq_is_locked(rq));
 
     len = erts_atomic32_read_dirty(&rq->len);
-    len--;
+    len -= n;
     ASSERT(len >= 0);
     erts_atomic32_set_nob(&rq->len, len);
 
     len = erts_atomic32_read_dirty(&rqi->len);
-    len--;
+    len -= n;
     ASSERT(len >= 0);
     if (len == 0) {
 	ASSERT((erts_atomic32_read_nob(&rq->flags)
@@ -839,7 +847,12 @@ erts_dec_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio)
 					~((erts_aint32_t) (1 << prio)));
     }
     erts_atomic32_set_relb(&rqi->len, len);
+}
 
+ERTS_GLB_INLINE void
+erts_dec_runq_len(ErtsRunQueue *rq, ErtsRunQueueInfo *rqi, int prio)
+{
+    erts_sub_runq_len(rq, rqi, prio, 1);
 }
 
 ERTS_GLB_INLINE void
