@@ -2960,6 +2960,7 @@ run_test_cases_loop([{Mod,Func,Args}=Case|Cases], Config, TimetrapData, Mode0, S
 	    ok
     end,
 
+    maybe_put_flaky_info(Mode0),
     case run_test_case(undefined, Num+1, Mod, Func, Args,
 		       RunInit, TimetrapData, Mode) of
 	%% callback to framework module failed, exit immediately
@@ -3929,6 +3930,8 @@ run_test_case1(Ref, Num, Mod, Func, Args, RunInit,
                 _ -> not_a_test_fun
             end,
             put(test_server_ok, get(test_server_ok)+1);
+        {_,{failed, keep_going}} ->
+            ok;
         {_,failed} ->
             DiedTime = case Time of
                            died -> case RetVal of
@@ -4175,8 +4178,15 @@ progress(failed, CaseNum, Mod, Func, GrName, Loc, Reason, Time,
     print(major, "=result        failed: ~tp, ~tp", [Reason,LocMaj]),
     print(1, "*** FAILED ~ts ***",
 	  [get_info_str(Mod,Func, CaseNum, get(test_server_cases))]),
+
+    StatusTag = case should_keep_going() of
+        true ->
+            {failed, keep_going};
+        false ->
+            failed
+    end,
     test_server_sup:framework_call(report, [tc_done,{Mod,{Func,GrName},
-						     {failed,Reason}}]),
+						     {StatusTag,Reason}}]),
     TimeStr = io_lib:format(if is_float(Time) -> "~.3fs";
 			       true -> "~w"
 			    end, [Time]),
@@ -4197,7 +4207,7 @@ progress(failed, CaseNum, Mod, Func, GrName, Loc, Reason, Time,
     print(minor, "~ts",
           ["=== Reason: " ++
            escape_chars(io_lib:format(FStr, [FormattedReason]))]),
-    failed;
+    StatusTag;
 
 progress(ok, _CaseNum, Mod, Func, GrName, _Loc, RetVal, Time,
 	 Comment0, {St0,St1}) ->
@@ -5823,6 +5833,7 @@ encoding(File) ->
 
 check_repeat_testcase(Case,Result,Cases,
                       [{Ref,[{repeat,RepeatData0}],StartTime}|Mode0]) ->
+    maybe_report_flaky_test(Case, RepeatData0),
     case do_update_repeat_data(Result,RepeatData0) of
         false ->
             {Cases,Mode0};
@@ -5837,6 +5848,10 @@ do_update_repeat_data(_,{RT,N,N}) when is_integer(N) ->
     report_stop_repeat_testcase(done,{RT,N}),
     false;
 do_update_repeat_data(ok,{repeat_until_ok=RT,M,N}) ->
+    report_repeat_testcase(M,N),
+    report_stop_repeat_testcase(RT,{RT,N}),
+    false;
+do_update_repeat_data(ok,{flaky=RT,M,N}) ->
     report_repeat_testcase(M,N),
     report_stop_repeat_testcase(RT,{RT,N}),
     false;
@@ -5859,3 +5874,26 @@ report_repeat_testcase(M,forever) ->
     print(minor, "~n=== Repeated test case: ~w of infinity", [M]);
 report_repeat_testcase(M,N) ->
     print(minor, "~n=== Repeated test case: ~w of ~w", [M,N]).
+
+maybe_report_flaky_test({Mod, Func, _Args}, {flaky,N,_Max}) ->
+    case N > 1 of
+        true ->
+            print(minor, "~n=== FLAKY test case: ~w:~w", [Mod, Func]);
+        false ->
+            ok
+    end;
+maybe_report_flaky_test(_TestCase, _RepeatInfo) ->
+    ok.
+
+maybe_put_flaky_info([{_Ref, [{repeat, {flaky, N, M}}], _Time} | _]) ->
+    put('$ct_flaky_info', {N, M});
+maybe_put_flaky_info(_) ->
+    erase('$ct_flaky_info').
+
+should_keep_going() ->
+    case get('$ct_flaky_info') of
+        {N, M} when N < M ->
+            true;
+        _ ->
+            false
+    end.

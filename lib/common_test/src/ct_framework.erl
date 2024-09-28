@@ -1495,6 +1495,8 @@ report(What,Data) ->
 		    add_to_stats(user_skipped);
 		{_,{auto_skipped,_}} ->
 		    add_to_stats(auto_skipped);
+		{_,{{failed,keep_going}, _}} ->
+		    ok;
 		{_,{SkipOrFail,_Reason}} ->
 		    add_to_stats(SkipOrFail)
 	    end;
