@@ -1554,7 +1554,7 @@ Z = erlang:crc32_combine(X,Y,iolist_size(Data2)).</code>
               byte is included in the returned packet unless the line
               was truncated according to option <c>line_length</c>.</p>
           </item>
-          <tag><c>asn1 | cdr | sunrm | fcgi | tpkt</c></tag>
+          <tag><c>asn1 | cdr | sunrm | fcgi | tpkt | mqtt</c></tag>
           <item>
             <p>The header is <em>not</em> stripped off.</p>
             <p>The meanings of the packet types are as follows:</p>
@@ -1564,6 +1564,7 @@ Z = erlang:crc32_combine(X,Y,iolist_size(Data2)).</code>
               <tag><c>cdr</c> - CORBA (GIOP 1.1)</tag><item></item>
               <tag><c>fcgi</c> - Fast CGI</tag><item></item>
               <tag><c>tpkt</c> - TPKT format [RFC1006]</tag><item></item>
+              <tag><c>mqtt</c> - MQTT packet [mqtt-v5.0] / [mqtt-v3.1.1]</tag><item></item>
             </taglist>
           </item>
           <tag><c>http | httph | http_bin | httph_bin</c></tag>
