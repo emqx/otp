@@ -1433,7 +1433,7 @@ setcap cap_sys_admin,cap_sys_ptrace,cap_dac_read_search+epi beam.smp</code>
                   is stripped off on each receive operation.</p>
                 <p>The 4-byte header is limited to 2Gb.</p>
               </item>
-              <tag><c>asn1 | cdr | sunrm | fcgi | tpkt | line</c></tag>
+              <tag><c>asn1 | cdr | sunrm | fcgi | tpkt | mqtt | line</c></tag>
               <item>
                 <p>These packet types only have effect on receiving.
                   When sending a packet, it is the responsibility of
@@ -1450,6 +1450,7 @@ setcap cap_sys_admin,cap_sys_ptrace,cap_dac_read_search+epi beam.smp</code>
 		  <item><c>cdr</c> - CORBA (GIOP 1.1)</item>
 		  <item><c>fcgi</c> - Fast CGI</item>
 		  <item><c>tpkt</c> - TPKT format [RFC1006]</item>
+		  <item><c>mqtt</c> - MQTT packet [mqtt-v5.0] / [mqtt-v3.1.1]</item>
 		  <item><c>line</c> - Line mode, a packet is a line-terminated
 		    with newline, lines longer than the receive buffer are
 		    truncated</item>
