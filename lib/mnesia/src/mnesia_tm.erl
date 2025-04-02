@@ -85,6 +85,14 @@ init(Parent) ->
     process_flag(trap_exit, true),
     process_flag(message_queue_data, off_heap),
 
+    %% If the mnesia_tm lives in a cluster that needs to communicate
+    %% with a number of other nodes, it is a good idea to set the
+    %% env `mnesia_tm_async_dist` to `true` to avoid getting suspended due
+    %% to busy dist port because a suspended and unresponsive mnesia_tm could
+    %% spread the issue to the entire cluster.
+    true =:= application:get_env(mnesia, mnesia_tm_async_dist, false)
+        andalso process_flag(async_dist, true),
+
     %% Initialize the schema
     IgnoreFallback = mnesia_monitor:get_env(ignore_fallback_at_startup),
     mnesia_bup:tm_fallback_start(IgnoreFallback),
