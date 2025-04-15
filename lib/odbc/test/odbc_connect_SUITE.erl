@@ -51,6 +51,7 @@ all() ->
 	     {group, client_dies}, connect_timeout, timeout,
 	     many_timeouts, timeout_reset, disconnect_on_timeout,
 	     connection_closed, disable_scrollable_cursors,
+             connection_string_wrapped,
 	     return_rows_as_lists, api_missuse, extended_errors];
 	Other -> {skip, Other}
     end.
@@ -198,6 +199,17 @@ commit(Config)  ->
 	(catch odbc:commit(Ref, commit, -1)),
 
     ok = odbc:disconnect(Ref).
+%%-------------------------------------------------------------------------
+connection_string_wrapped()->
+    [{doc,"Test handling a connection string wrapped in a function, to avoid leaking secrets."}].
+connection_string_wrapped(_Config)  ->
+    ConnStrWrap1 = fun() -> ?RDBMS:connection_string() end,
+    {ok, Ref1} =  odbc:connect(ConnStrWrap1, odbc_test_lib:platform_options()),
+    ok = odbc:disconnect(Ref1),
+    %% Multiple wrapping should work too
+    ConnStrWrap2 = fun() -> ConnStrWrap1 end,
+    {ok, Ref2} =  odbc:connect(ConnStrWrap2, odbc_test_lib:platform_options()),
+    ok = odbc:disconnect(Ref2).
 %%-------------------------------------------------------------------------
 
 rollback()->
