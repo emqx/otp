@@ -266,7 +266,7 @@ update_last_mtime(ErtsSchedulerData *esdp, ErtsMonotonicTime mtime)
         if (esdp->last_monotonic_time > mtime) {
             ERTS_ASSERT(esdp == erts_get_scheduler_data());
             erts_exit(ERTS_ABORT_EXIT,
-                      "Erlang monotonic time stepped backwards!\n"
+                      "Erlang monotonic time stepped backwards! Maybe add '+c false' in vm.args\n"
                       "Previous time: %b64d\n"
                       "Current time:  %b64d\n",
                       esdp->last_monotonic_time,
@@ -287,7 +287,7 @@ check_os_monotonic_time(ErtsSchedulerData *esdp, ErtsMonotonicTime mtime)
         if (esdp->last_os_monotonic_time > mtime) {
             ERTS_ASSERT(esdp == erts_get_scheduler_data());
             erts_exit(ERTS_ABORT_EXIT,
-                      "OS monotonic time stepped backwards!\n"
+                      "OS monotonic time stepped backwards! Maybe add '+c false' in vm.args\n"
                       "Previous time: %b64d\n"
                       "Current time:  %b64d\n",
                       esdp->last_os_monotonic_time,
@@ -374,7 +374,7 @@ read_corrected_time(int os_drift_corrected, ErtsSchedulerData *esdp)
     else {
 	if (os_mtime < time_sup.inf.c.parmon.cdata.insts.prev.os_mtime)
 	    erts_exit(ERTS_ABORT_EXIT,
-		     "OS monotonic time stepped backwards\n");
+		     "OS monotonic time stepped backwards, maybe add '+c false' in vm.args\n");
 	ci = time_sup.inf.c.parmon.cdata.insts.prev;
     }
 
@@ -473,7 +473,7 @@ check_time_correction(void *vesdp)
 
     if (os_mtime < ci.os_mtime)
 	erts_exit(ERTS_ABORT_EXIT,
-		 "OS monotonic time stepped backwards\n");
+		 "OS monotonic time stepped backwards, maybe add '+c false' in vm.args\n");
 
     erl_mtime = calc_corrected_erl_mtime(os_mtime, &ci, &mdiff,
 					 os_drift_corrected);
@@ -901,7 +901,7 @@ finalize_corrected_time_offset(ErtsSystemTime *stimep)
 
     if (os_mtime < ci.os_mtime)
 	erts_exit(ERTS_ABORT_EXIT,
-		 "OS monotonic time stepped backwards\n");
+		 "OS monotonic time stepped backwards, maybe add '+c false' in vm.args\n");
 
     return calc_corrected_erl_mtime(os_mtime, &ci, NULL,
 				    os_drift_corrected);

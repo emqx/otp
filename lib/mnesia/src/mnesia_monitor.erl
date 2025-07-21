@@ -690,8 +690,10 @@ env() ->
      pid_sort_order,
      no_table_loaders,
      dc_dump_limit,
+     copy_from_node,
      send_compressed,
      max_transfer_size,
+     send_table_batch_size,
      schema
     ].
 
@@ -740,10 +742,14 @@ default_env(no_table_loaders) ->
     2;
 default_env(dc_dump_limit) ->
     4;
+default_env(copy_from_node) ->
+    undefined;
 default_env(send_compressed) ->
     0;
 default_env(max_transfer_size) ->
     64000;
+default_env(send_table_batch_size) ->
+    0;
 default_env(schema) ->
     [].
 
@@ -792,8 +798,10 @@ do_check_type(pid_sort_order, "standard") -> standard;
 do_check_type(pid_sort_order, _) -> false;
 do_check_type(no_table_loaders, N) when is_integer(N), N > 0 -> N;
 do_check_type(dc_dump_limit,N) when is_number(N), N > 0 -> N;
+do_check_type(copy_from_node, L) when is_atom(L) -> L;
 do_check_type(send_compressed, L) when is_integer(L), L >= 0, L =< 9 -> L;
 do_check_type(max_transfer_size, N) when is_integer(N), N > 0 -> N;
+do_check_type(send_table_batch_size, L) when is_integer(L), L >= 0 -> L;
 do_check_type(schema, L) when is_list(L) -> L.
 
 bool(true) -> true;

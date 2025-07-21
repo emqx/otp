@@ -1849,6 +1849,7 @@ do_commit(Tid, C, DumperMode) ->
     R4 = do_update(Tid, disc_only_copies, C#commit.disc_only_copies, R3),
     R5 = do_update_ext(Tid, C#commit.ext, R4),
     mnesia_subscr:report_activity(Tid),
+    mnesia_hook:do_post_commit(Tid, C),
     R5.
 
 %% This could/should be optimized
@@ -1971,7 +1972,7 @@ commit_del_object([H|R], Tid, Storage, Tab, K, Obj) when element(1, H) == index 
 
 commit_clear([], _, _, _, _, _) ->  ok;
 commit_clear([{checkpoints, CpList}|R], Tid, Storage, Tab, K, Obj) ->
-    mnesia_checkpoint:tm_retain(Tid, Tab, K, clear_table, CpList),
+    mnesia_checkpoint:tm_retain(Tid, Tab, K, clear_table, CpList, Obj),
     commit_clear(R, Tid, Storage, Tab, K, Obj);
 commit_clear([H|R], Tid, Storage, Tab, K, Obj)
   when element(1, H) == subscribers ->
