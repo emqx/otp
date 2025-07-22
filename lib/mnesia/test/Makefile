@@ -56,7 +56,8 @@ MODULES= \
 	ext_test \
 	ext_test_server \
 	mnesia_index_plugin_test \
-	mnesia_external_backend_test
+	mnesia_external_backend_test \
+	mnesia_match_delete_test
 
 DocExamplesDir := ../doc/src/
 

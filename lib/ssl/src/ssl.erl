@@ -147,6 +147,9 @@ Special Erlang node configuration for the application can be found in
 %% Tracing
 -export([handle_trace/3]).
 
+%% EMQ fork
+-export([default_cacerts/0]).
+
 -deprecated([{prf,5,"Use export_key_materials/4 instead. "
               "Note that in OTP 28 the 'testing' way of calling this function will no longer be supported."
               }]).
@@ -1529,8 +1532,11 @@ different semantics for the client and server.
   > a `{missing, ocsp_nonce}` logger event.
 """.
 
--type client_option_cert() :: {verify, Verify ::verify_peer | verify_none} |
-                              {cacerts,  CACerts::[public_key:der_encoded()] | [public_key:combined_cert()]} |
+-type client_option_cert() :: {verify, Verify :: verify_peer | verify_none} |
+                              {cacerts,  CACerts ::
+                                system_defaults |
+                                [public_key:der_encoded()] |
+                                [public_key:combined_cert()]} |
                               {cacertfile, CACertFile::file:filename()} |
                               {server_name_indication, SNI::inet:hostname() | disable} |
                               {customize_hostname_check, HostNameCheckOpts::list()} |
@@ -1855,7 +1861,10 @@ Certificate related options for a server.
 """.
 
 -doc(#{title => <<"Server Options">>}).
--type server_option_cert() :: {cacerts,  CACerts::[public_key:der_encoded()] | [public_key:combined_cert()]} |
+-type server_option_cert() :: {cacerts,  CACerts::
+                                system_defaults |
+                                [public_key:der_encoded()] |
+                                [public_key:combined_cert()]} |
                               {cacertfile,  CACertFile::file:filename()} |
                               {verify, Verify:: verify_none | verify_peer} |
                               {fail_if_no_peer_cert, FailNoPeerCert::boolean()} |
@@ -2135,6 +2144,22 @@ TLS connection keys for which information can be retrieved.
 %%%--------------------------------------------------------------------
 %%% API
 %%%--------------------------------------------------------------------
+
+%% This function is added in EMQ's OTP fork until the upstream provides a similar solution.
+%% The application code can be implement like:
+%%
+%% default_cacerts() ->
+%%     try
+%%         ssl:default_cacerts()
+%%     catch
+%%         _:_ ->
+%%             public_key:cacerts_get()
+%%     end.
+-spec default_cacerts() -> system_defaults.
+default_cacerts() ->
+    system_defaults.
+%%--------------------------------------------------------------------
+
 -doc(#{title => <<"Utility Functions">>,
        equiv => start(temporary),
        since => <<"OTP R14B">>}).
@@ -3747,6 +3772,7 @@ ssl_options() ->
      max_fragment_length,
      next_protocol_selector,  next_protocols_advertised,
      stapling,
+     certificate_status,
      padding_check,
      partial_chain,
      password,
@@ -3808,10 +3834,11 @@ validate_updated_versions(tls, [_| _] = NewVersions) ->
 validate_updated_versions(dtls, [_|_] = NewVersions) ->
     validate_versions(dtls, NewVersions).
 
-process_options(UserSslOpts, SslOpts0, Env) ->
+process_options(UserSslOpts, SslOptsIn, Env) ->
     %% Reverse option list so we get the last set option if set twice,
     %% users depend on it.
     UserSslOptsMap = proplists:to_map(lists:reverse(UserSslOpts)),
+    SslOpts0  = opt_certificate_status(UserSslOptsMap, SslOptsIn, Env),
     SslOpts1  = opt_protocol_versions(UserSslOptsMap, SslOpts0, Env),
     SslOpts2  = opt_verification(UserSslOptsMap, SslOpts1, Env),
     SslOpts3  = opt_certs(UserSslOptsMap, SslOpts2, Env),
@@ -4233,8 +4260,13 @@ check_key_legacy_version_dep(Versions, Key) ->
 
 opt_cacerts(UserOpts, #{verify := Verify, log_level := LogLevel, versions := Versions} = Opts,
             #{role := Role}) ->
-    {_, CaCerts} = get_opt_list(cacerts, undefined, UserOpts, Opts),
-
+    CaCerts = case get_opt(cacerts, undefined, UserOpts, Opts) of
+                  {_, system_defaults} ->
+                      public_key:cacerts_get();
+                  _ ->
+                    {_, CaCerts0} = get_opt_list(cacerts, undefined, UserOpts, Opts),
+                    CaCerts0
+              end,
     CaCertFile = case get_opt_file(cacertfile, <<>>, UserOpts, Opts) of
                      {Where1, _FileName} when CaCerts =/= undefined ->
                          warn_override(Where1, UserOpts, cacerts, [cacertfile], LogLevel),
@@ -4332,6 +4364,15 @@ opt_stapling(UserOpts, #{versions := _Versions} = Opts, #{role := client}) ->
 opt_stapling(UserOpts, Opts, #{role := server}) ->
     assert_client_only(stapling, UserOpts),
     Opts.
+
+opt_certificate_status(UserOpts, Opts, #{role := _Role}) ->
+    {_, CertificateStatus} = get_opt(certificate_status, undefined, UserOpts, Opts),
+    case CertificateStatus of
+        undefined -> ok;
+        #certificate_status{} -> ok;
+        _Value -> option_error(certificate_status, CertificateStatus)
+    end,
+    Opts#{certificate_status => CertificateStatus}.
 
 opt_sni(UserOpts, #{versions := _Versions} = Opts, #{role := server}) ->
     {_, SniHosts} = get_opt_list(sni_hosts, [], UserOpts, Opts),
