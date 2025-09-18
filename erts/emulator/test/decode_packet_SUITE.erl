@@ -245,6 +245,10 @@ packet_size(Config) when is_list(Config) ->
                 case decode_pkt(Type,Bin,[{packet_size,Max}]) of
                     {ok,Unpacked,Rest} when Max=:=0; Max>=byte_size(Packet) ->
                         ok;
+                    {ok,Head,Tail} when Type =:= mqtt andalso byte_size(Unpacked) > Max ->
+                        true = (Bin =:= iolist_to_binary([Head,Tail])),
+                        {ok, Head, <<>>} = decode_pkt(Type,Head,[{packet_size,Max}]),
+                        ok;
                     {error,_} when Max<byte_size(Packet), Max=/=0 ->
                         ok;
                     {error,_} when Type=:=fcgi, Max=/=0 ->
