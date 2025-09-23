@@ -24,7 +24,7 @@
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("public_key/include/public_key.hrl").
--include("ssl_handshake.hrl").
+-include_lib("ssl/src/ssl_handshake.hrl").
 -include("ssl_test_lib.hrl").
 
 %% Callback functions
