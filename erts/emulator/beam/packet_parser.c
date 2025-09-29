@@ -502,19 +502,10 @@ int packet_get_length(enum PacketParseType htype,
         /* ERROR: variable byte integer >4 bytes long */
         goto error;
     packet:
-        if (max_plen != 0 && plen > max_plen) {
-            /* Application will only get the head of a too-large MQTT packet
-             * and should check frame length against max length again then
-             * send DISCONNECT with reason code 149 (packet-too-large).
-             * If application does not check size, the packet would
-             * appear to be malformed
-             */
-            return hlen;
-        }
         /* No special parsing for now */
         goto remain;
     }
-
+    
     default:
         DEBUGF((" => case error\r\n"));
         return -1;
