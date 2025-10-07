@@ -72,7 +72,7 @@ groups() ->
     [{light, [],
       [{group, install}, {group, nice}, {group, evil},
        {group, frag}, {group, qlc}, {group, index_plugins},
-       {group, registry}, {group, config}, {group, examples}]},
+       {group, registry}, {group, config}, {group, examples}, {group, match_delete}]},
      {install, [], [{mnesia_install_test, all}]},
      {nice, [], [{mnesia_nice_coverage_test, all}]},
      {evil, [], [{mnesia_evil_coverage_test, all}]},
@@ -82,6 +82,7 @@ groups() ->
      {config, [], [{mnesia_config_test, all}]},
      {examples, [], [{mnesia_examples_test, all}]},
      {frag, [], [{mnesia_frag_test, all}]},
+     {match_delete, [], [{mnesia_match_delete_test, all}]},
      %% The 'medium' test suite verfies the ACID (atomicity, consistency
      %% isolation and durability) properties and various recovery scenarios
      %% These tests may take quite while to run.
