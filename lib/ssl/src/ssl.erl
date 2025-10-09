@@ -132,6 +132,10 @@ Special Erlang node configuration for the application can be found in
 %% EMQ fork
 -export([default_cacerts/0]).
 
+%% EMQ fork, backward compatibility
+-export([handle_options/3,
+         update_options/3]).
+
 -deprecated([{prf,5,"Use export_key_materials/4 instead. "
               "Note that in OTP 28 the 'testing' way of calling this function will no longer be supported."
               }]).
@@ -148,6 +152,10 @@ Special Erlang node configuration for the application can be found in
            "use ssl:negotiated_protocol/1 instead"}]).
 -removed([{connection_info,1,
            "use ssl:connection_information/1,2 instead"}]).
+-removed([{handle_options,3,
+           "use ssl_config:handle_options/3,4 instead"}]).
+-removed([{update_options,3,
+           "use ssl_config:update_options/3 instead"}]).
 
 -export_type([active_msgs/0,
               cert_key_conf/0,
@@ -3884,3 +3892,15 @@ handle_trace(rle, {call, {?MODULE, connect, Args}}, Stack0) ->
     Role = client,
     {io_lib:format("(*~w) Args = ~W", [Role, Args, 10]), [{role, Role} | Stack0]}.
 
+%%%--------------------------------------------------------------
+%%% Backward compatibility
+%%%--------------------------------------------------------------------
+-doc false.
+-spec handle_options([any()], client | server, undefined|host()) -> {ok, #config{}}.
+handle_options(Opts, Role, Host) ->
+    ssl_config:handle_options(Opts, Role, Host).
+
+-doc false.
+-spec update_options([any()], client | server, map()) -> map().
+update_options(NewOpts, Role, OriginalSslOpts) ->
+    ssl_config:update_options(NewOpts, Role, OriginalSslOpts).
