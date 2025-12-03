@@ -35,6 +35,9 @@ case "${BASE_BRANCH}" in
 esac
 
 case "${BASE_BRANCH}" in
+    emqx-OTP-*)
+        LATEST_ERLANG_VERSION="$(echo "$BASE_BRANCH" | grep -oP 'emqx-OTP-\K[0-9]+')"
+        ;;
     maint-*)
         LATEST_ERLANG_VERSION=${BASE_BRANCH#"maint-"}
         ;;

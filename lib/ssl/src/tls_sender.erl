@@ -422,7 +422,7 @@ handshake(cast, {new_write, WriteState, Version, MaxFragLen},
     case Version of
         ?TLS_1_3 ->
             maybe_traffic_keylog_1_3(Fun, Role, ConnectionStates, N);
-        _ ->
+         _ ->
             ok
     end,
     {next_state, connection,
