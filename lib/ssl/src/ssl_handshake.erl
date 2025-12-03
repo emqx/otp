@@ -433,7 +433,7 @@ certificate_verify(Signature, PublicKeyInfo, Version,
     end.
 %%--------------------------------------------------------------------
 -spec verify_signature(ssl_record:ssl_version(), binary(), {term(), term()}, binary(),
-				   public_key_info()) -> true | false.
+                       public_key_info()) -> true | false.
 %%
 %% Description: Checks that a public_key signature is valid.
 %%--------------------------------------------------------------------
@@ -2711,9 +2711,13 @@ encode_psk_binders(Binders) ->
     Len = byte_size(Result),
     <<?UINT16(Len), Result/binary>>.
 
-
 hello_extensions_list(HelloExtensions) ->
-    [Ext || {_, Ext} <- maps:to_list(HelloExtensions), Ext =/= undefined].
+    case maps:take(pre_shared_key, HelloExtensions) of
+        {#pre_shared_key_client_hello{} = PSK, Rest} ->
+            [Ext || {_, Ext} <- maps:to_list(Rest), Ext =/= undefined] ++ [PSK];
+        _ ->
+            [Ext || {_, Ext} <- maps:to_list(HelloExtensions), Ext =/= undefined]
+    end.
 
 %%-------------Decode handshakes---------------------------------
 dec_server_key(<<?UINT16(PLen), P:PLen/binary,
@@ -2908,10 +2912,12 @@ decode_extensions(<<?UINT16(?ALPN_EXT), ?UINT16(ExtLen), ?UINT16(Len),
                     ExtensionData:Len/binary, Rest/binary>>, Version, MessageType, Acc)
   when Len + 2 =:= ExtLen ->
     ALPN = #alpn{extension_data = ExtensionData},
+    assert_unique_extension(alpn, Acc),
     decode_extensions(Rest, Version, MessageType, Acc#{alpn => ALPN});
 decode_extensions(<<?UINT16(?NEXTPROTONEG_EXT), ?UINT16(Len),
                     ExtensionData:Len/binary, Rest/binary>>, Version, MessageType, Acc) ->
     NextP = #next_protocol_negotiation{extension_data = ExtensionData},
+    assert_unique_extension(next_protocol_negotiation, Acc),
     decode_extensions(Rest, Version, MessageType, Acc#{next_protocol_negotiation => NextP});
 decode_extensions(<<?UINT16(?RENEGOTIATION_EXT), ?UINT16(Len),
                     Info:Len/binary, Rest/binary>>, Version, MessageType, Acc) ->
@@ -2923,6 +2929,7 @@ decode_extensions(<<?UINT16(?RENEGOTIATION_EXT), ?UINT16(Len),
 			      <<?BYTE(VerifyLen), VerifyInfo/binary>> = Info,
 			      VerifyInfo
 		      end,
+    assert_unique_extension(renegotiation_info, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{renegotiation_info =>
                                #renegotiation_info{renegotiated_connection =
@@ -2931,6 +2938,7 @@ decode_extensions(<<?UINT16(?RENEGOTIATION_EXT), ?UINT16(Len),
 decode_extensions(<<?UINT16(?SRP_EXT), ?UINT16(Len), ?BYTE(SRPLen),
                     SRP:SRPLen/binary, Rest/binary>>, Version, MessageType, Acc)
   when Len == SRPLen + 1 ->
+    assert_unique_extension(srp, Acc),
     decode_extensions(Rest, Version, MessageType, Acc#{srp => #srp{username = SRP}});
 
 decode_extensions(<<?UINT16(?SIGNATURE_ALGORITHMS_EXT), ?UINT16(Len),
@@ -2940,6 +2948,7 @@ decode_extensions(<<?UINT16(?SIGNATURE_ALGORITHMS_EXT), ?UINT16(Len),
     <<?UINT16(SignAlgoListLen), SignAlgoList/binary>> = ExtData,
     HashSignAlgos = [{ssl_cipher:hash_algorithm(Hash), ssl_cipher:sign_algorithm(Sign)} ||
 			<<?BYTE(Hash), ?BYTE(Sign)>> <= SignAlgoList],
+    assert_unique_extension(signature_algs, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{signature_algs =>
                                #hash_sign_algos{hash_sign_algos =
@@ -2949,6 +2958,7 @@ decode_extensions(<<?UINT16(?SIGNATURE_ALGORITHMS_EXT), ?UINT16(Len),
     SignSchemeListLen = Len - 2,
     <<?UINT16(SignSchemeListLen), SignSchemeList/binary>> = ExtData,
     HashSigns = decode_sign_alg(Version, SignSchemeList),
+    assert_unique_extension(signature_algs, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{signature_algs =>
                                #hash_sign_algos{
@@ -2958,6 +2968,7 @@ decode_extensions(<<?UINT16(?SIGNATURE_ALGORITHMS_EXT), ?UINT16(Len),
     SignSchemeListLen = Len - 2,
     <<?UINT16(SignSchemeListLen), SignSchemeList/binary>> = ExtData,
     SignSchemes = decode_sign_alg(Version, SignSchemeList),
+    assert_unique_extension(signature_algs, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{signature_algs =>
                                #signature_algorithms{
@@ -2977,6 +2988,7 @@ decode_extensions(<<?UINT16(?SIGNATURE_ALGORITHMS_CERT_EXT), ?UINT16(Len),
           end,
     SignSchemes= lists:filtermap(Fun, [SignScheme ||
                                           <<?UINT16(SignScheme)>> <= SignSchemeList]),
+    assert_unique_extension(signature_algs_cert, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{signature_algs_cert =>
                                #signature_algorithms_cert{
@@ -2986,6 +2998,7 @@ decode_extensions(<<?UINT16(?USE_SRTP_EXT), ?UINT16(Len),
 		       ExtData:Len/binary, Rest/binary>>, Version, MessageType, Acc) ->
     <<?UINT16(ProfilesLen), ProfilesBin:ProfilesLen/binary, ?BYTE(MKILen), MKI:MKILen/binary>> = ExtData,
     Profiles = [P || <<P:2/binary>> <= ProfilesBin],
+    assert_unique_extension(use_srtp, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{use_srtp =>
                               #use_srtp{
@@ -3006,6 +3019,7 @@ decode_extensions(<<?UINT16(?ELLIPTIC_CURVES_EXT), ?UINT16(Len),
 		   end
 	   end,
     EllipticCurves = lists:filtermap(Pick, [ECC || <<ECC:16>> <= EllipticCurveList]),
+    assert_unique_extension(elliptic_curves, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{elliptic_curves =>
                                #elliptic_curves{elliptic_curve_list =
@@ -3024,6 +3038,7 @@ decode_extensions(<<?UINT16(?ELLIPTIC_CURVES_EXT), ?UINT16(Len),
 		   end
 	   end,
     SupportedGroups = lists:filtermap(Pick, [Group || <<Group:16>> <= GroupList]),
+    assert_unique_extension(elliptic_curves, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{elliptic_curves =>
                                #supported_groups{supported_groups =
@@ -3033,6 +3048,7 @@ decode_extensions(<<?UINT16(?EC_POINT_FORMATS_EXT), ?UINT16(Len),
                     ExtData:Len/binary, Rest/binary>>, Version, MessageType, Acc) ->
     <<?BYTE(_), ECPointFormatList/binary>> = ExtData,
     ECPointFormats = binary_to_list(ECPointFormatList),
+    assert_unique_extension(ec_point_formats, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{ec_point_formats =>
                                #ec_point_formats{ec_point_format_list =
@@ -3040,22 +3056,26 @@ decode_extensions(<<?UINT16(?EC_POINT_FORMATS_EXT), ?UINT16(Len),
 
 decode_extensions(<<?UINT16(?SNI_EXT), ?UINT16(Len),
                     Rest/binary>>, Version, MessageType, Acc) when Len == 0 ->
+    assert_unique_extension(sni, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{sni => #sni{hostname = ""}}); %% Server may send an empty SNI
 
 decode_extensions(<<?UINT16(?SNI_EXT), ?UINT16(Len),
                 ExtData:Len/binary, Rest/binary>>, Version, MessageType, Acc) ->
     <<?UINT16(_), NameList/binary>> = ExtData,
+    assert_unique_extension(sni, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{sni => dec_sni(NameList)});
 
 decode_extensions(<<?UINT16(?MAX_FRAGMENT_LENGTH_EXT), ?UINT16(1), ?BYTE(MaxFragEnum), Rest/binary>>,
                   Version, MessageType, Acc) ->
     %% RFC 6066 Section 4
+    assert_unique_extension(max_frag_enum, Acc),
     decode_extensions(Rest, Version, MessageType, Acc#{max_frag_enum => #max_frag_enum{enum = MaxFragEnum}});
 decode_extensions(<<?UINT16(?SUPPORTED_VERSIONS_EXT), ?UINT16(Len),
                        ExtData:Len/binary, Rest/binary>>, Version, MessageType, Acc) when Len > 2 ->
     <<?BYTE(_),Versions/binary>> = ExtData,
+    assert_unique_extension(client_hello_versions, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{client_hello_versions =>
                                #client_hello_versions{
@@ -3064,6 +3084,7 @@ decode_extensions(<<?UINT16(?SUPPORTED_VERSIONS_EXT), ?UINT16(Len),
 decode_extensions(<<?UINT16(?SUPPORTED_VERSIONS_EXT), ?UINT16(Len),
                        ?UINT16(SelectedVersion), Rest/binary>>, Version, MessageType, Acc)
   when Len =:= 2, SelectedVersion =:= 16#0304 ->
+    assert_unique_extension(server_hello_selected_version, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{server_hello_selected_version =>
                                #server_hello_selected_version{selected_version = ?TLS_1_3}});
@@ -3072,6 +3093,7 @@ decode_extensions(<<?UINT16(?KEY_SHARE_EXT), ?UINT16(Len),
                        ExtData:Len/binary, Rest/binary>>,
                   Version, MessageType = client_hello, Acc) ->
     <<?UINT16(_),ClientShares/binary>> = ExtData,
+    assert_unique_extension(key_share, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{key_share =>
                                #key_share_client_hello{
@@ -3081,6 +3103,7 @@ decode_extensions(<<?UINT16(?KEY_SHARE_EXT), ?UINT16(Len),
                     ExtData:Len/binary, Rest/binary>>,
                   Version, MessageType = server_hello, Acc) ->
     <<?UINT16(Group),?UINT16(KeyLen),KeyExchange:KeyLen/binary>> = ExtData,
+    assert_unique_extension(key_share, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{key_share =>
                                #key_share_server_hello{
@@ -3101,6 +3124,7 @@ decode_extensions(<<?UINT16(?KEY_SHARE_EXT), ?UINT16(Len),
 decode_extensions(<<?UINT16(?PSK_KEY_EXCHANGE_MODES_EXT), ?UINT16(Len),
                        ExtData:Len/binary, Rest/binary>>, Version, MessageType, Acc) ->
     <<?BYTE(PLen),KEModes:PLen/binary>> = ExtData,
+    assert_unique_extension(psk_key_exchange_modes, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{psk_key_exchange_modes =>
                                #psk_key_exchange_modes{
@@ -3110,17 +3134,20 @@ decode_extensions(<<?UINT16(?PRE_SHARED_KEY_EXT), ?UINT16(Len),
                        ExtData:Len/binary, Rest/binary>>,
                   Version, MessageType = client_hello, Acc) ->
     <<?UINT16(IdLen),Identities:IdLen/binary,?UINT16(BLen),Binders:BLen/binary>> = ExtData,
+    assert_unique_extension(pre_shared_key, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{pre_shared_key =>
                                #pre_shared_key_client_hello{
                                   offered_psks = #offered_psks{
                                                     identities = decode_psk_identities(Identities),
-                                                    binders = decode_psk_binders(Binders)}}});
-
+                                                    binders = decode_psk_binders(Binders)},
+                                  binder_length = BLen + 2}}
+                     );
 decode_extensions(<<?UINT16(?PRE_SHARED_KEY_EXT), ?UINT16(Len),
                        ExtData:Len/binary, Rest/binary>>,
                   Version, MessageType = server_hello, Acc) ->
     <<?UINT16(Identity)>> = ExtData,
+    assert_unique_extension(pre_shared_key, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{pre_shared_key =>
                                #pre_shared_key_server_hello{
@@ -3130,6 +3157,7 @@ decode_extensions(<<?UINT16(?COOKIE_EXT), ?UINT16(Len), ?UINT16(CookieLen),
                     Cookie:CookieLen/binary, Rest/binary>>,
                   Version, MessageType, Acc)
   when Len == CookieLen + 2 ->
+    assert_unique_extension(cookie, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{cookie => #cookie{cookie = Cookie}});
 
@@ -3140,6 +3168,7 @@ decode_extensions(<<?UINT16(?STATUS_REQUEST), ?UINT16(Len),
                     _ExtensionData:Len/binary, Rest/binary>>, Version,
                     MessageType = server_hello, Acc)
   when Len =:= 0 ->
+    assert_unique_extension(status_request, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{status_request => undefined});
 %% RFC8446 4.4.2.1, In TLS1.3, the body of the "status_request" extension
@@ -3152,6 +3181,7 @@ decode_extensions(<<?UINT16(?STATUS_REQUEST), ?UINT16(Len),
         <<?BYTE(?CERTIFICATE_STATUS_TYPE_OCSP),
           ?UINT24(OCSPLen),
           ASN1OCSPResponse:OCSPLen/binary>> ->
+            assert_unique_extension(status_request, Acc),
             decode_extensions(Rest, Version, MessageType,
                       Acc#{status_request => #certificate_status{response = ASN1OCSPResponse}});
         <<?BYTE(?CERTIFICATE_STATUS_TYPE_OCSP),
@@ -3165,12 +3195,14 @@ decode_extensions(<<?UINT16(?STATUS_REQUEST), ?UINT16(Len),
 
 decode_extensions(<<?UINT16(?EARLY_DATA_EXT), ?UINT16(0), Rest/binary>>,
                   Version, MessageType, Acc) ->
+    assert_unique_extension(early_data, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{early_data => #early_data_indication{}});
 
 decode_extensions(<<?UINT16(?EARLY_DATA_EXT), ?UINT16(4), ?UINT32(MaxSize),
                     Rest/binary>>,
                   Version, MessageType, Acc) ->
+    assert_unique_extension(early_data, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{early_data =>
                                #early_data_indication_nst{indication = MaxSize}});
@@ -3179,6 +3211,7 @@ decode_extensions(<<?UINT16(?CERTIFICATE_AUTHORITIES_EXT), ?UINT16(Len),
                   Version, MessageType, Acc) ->
     CertAutsLen = Len - 2,
     <<?UINT16(CertAutsLen), EncCertAuts/binary>> = CertAutsExt,
+    assert_unique_extension(certificate_authorities, Acc),
     decode_extensions(Rest, Version, MessageType,
                       Acc#{certificate_authorities =>
                                #certificate_authorities{authorities = decode_cert_auths(EncCertAuts, [])}});
@@ -3189,6 +3222,14 @@ decode_extensions(<<?UINT16(_), ?UINT16(Len), _Unknown:Len/binary, Rest/binary>>
 %% This theoretically should not happen if the protocol is followed, but if it does it is ignored.
 decode_extensions(_, _, _, Acc) ->
     Acc.
+
+assert_unique_extension(Ext, Map) ->
+    case maps:get(Ext, Map, undefined) of
+        undefined ->
+            ok;
+        _  ->
+            throw(?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER, {duplicate_extension, Ext}))
+    end.
 
 decode_sign_alg(?TLS_1_2, SignSchemeList) ->
     %% Ignore unknown signature algorithms

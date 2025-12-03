@@ -23,6 +23,59 @@ limitations under the License.
 
 This document describes the changes made to the SSL application.
 
+## SSL 11.4.2
+
+### Fixed Bugs and Malfunctions
+
+- Graceful error handling added in negative test scenario.
+
+  Own Id: OTP-19813 Aux Id: [PR-10284]
+
+- Handle duplicate change_cipher_spec message with an unexpected message alert instead of failing later in corrupted state.
+
+  Own Id: OTP-19818 Aux Id: [PR-10296]
+
+- Make sure TLS-1.3 protocol spec is followed, that is psk-hello extension is guaranteed to be included as the last extension in the list of client hello extensions and internal hello message truncation in handshake history is handled correctly, the previous handling could cause interoperability issues.
+
+  Own Id: OTP-19825 Aux Id: [PR-10296]
+
+- If two certificate massages are sent to the server generate an unexpected message alert for the second one.
+
+  Own Id: OTP-19830 Aux Id: [PR-10339]
+
+[PR-10284]: https://github.com/erlang/otp/pull/10284
+[PR-10296]: https://github.com/erlang/otp/pull/10296
+[PR-10296]: https://github.com/erlang/otp/pull/10296
+[PR-10339]: https://github.com/erlang/otp/pull/10339
+
+## SSL 11.4.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed so that sending of application data will adhere to max_fragment_length. This was broken in OTP-27 release by an optimization.
+
+  Own Id: OTP-19774 Aux Id: [GH-10191], [PR-10201]
+
+- PR-10046 put to hard requirements on key file content. Make sure same file can be used as keyfile and certfile
+
+  Own Id: OTP-19780 Aux Id: [GH-10217], [GH-10212], [PR-10221]
+
+- Assert that hello extensions are unique and send an illegal parameter alert if they are not.
+
+  Own Id: OTP-19791 Aux Id: [PR-10245]
+
+- Avoid sending an internal message to the user process in conjunction with handling a key update.
+
+  Own Id: OTP-19806 Aux Id: [PR-10274]
+
+[GH-10191]: https://github.com/erlang/otp/issues/10191
+[PR-10201]: https://github.com/erlang/otp/pull/10201
+[GH-10217]: https://github.com/erlang/otp/issues/10217
+[GH-10212]: https://github.com/erlang/otp/issues/10212
+[PR-10221]: https://github.com/erlang/otp/pull/10221
+[PR-10245]: https://github.com/erlang/otp/pull/10245
+[PR-10274]: https://github.com/erlang/otp/pull/10274
+
 ## SSL 11.4
 
 ### Fixed Bugs and Malfunctions

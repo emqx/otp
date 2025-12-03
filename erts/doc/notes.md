@@ -23,6 +23,36 @@ limitations under the License.
 
 This document describes the changes made to the ERTS application.
 
+## Erts 16.1.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a JIT bug that could miscompile equality tests on empty bitstrings.
+
+  Own Id: OTP-19846 Aux Id: [PR-10359]
+
+- The documentation building code produced warnings during the build, if none of the applications were skipped. The warnings were resolved.
+
+  Own Id: OTP-19865 Aux Id: ERIERL-1251,[PR-10396]
+
+[PR-10359]: https://github.com/erlang/otp/pull/10359
+[PR-10396]: https://github.com/erlang/otp/pull/10396
+
+## Erts 16.1.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed the `erl` documentation of the default timewarp mode used.
+
+  Own Id: OTP-19790 Aux Id: [PR-9970]
+
+- The `erlang:suspend_process()` BIFs failed to suspend processes currently executing on dirty schedulers.
+
+  Own Id: OTP-19799 Aux Id: [PR-10241]
+
+[PR-9970]: https://github.com/erlang/otp/pull/9970
+[PR-10241]: https://github.com/erlang/otp/pull/10241
+
 ## Erts 16.1
 
 ### Fixed Bugs and Malfunctions
