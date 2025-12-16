@@ -2519,15 +2519,44 @@ handshake(Socket, SslOptions, Timeout)
             handle_options(Transport, Socket, SslOptions, server, undefined),
         ok = tls_socket:setopts(Transport, Socket, tls_socket:internal_inet_values()),
         {ok, Port} = tls_socket:port(Transport, Socket),
-        {ok, SessionIdHandle} = tls_socket:session_id_tracker(ssl_unknown_listener, SslOpts),
+        Trackers = build_trackers(SslOpts),
         ssl_gen_statem:handshake(ConnetionCb, Port, Socket,
-                                 {SslOpts, 
+                                 {SslOpts,
                                   tls_socket:emulated_socket_options(EmOpts, #socket_options{}),
-                                  [{session_id_tracker, SessionIdHandle}]},
+                                  Trackers},
                                  self(), CbInfo, Timeout)
     catch
         Error = {error, _Reason} -> Error
-    end.   
+    end.
+
+build_trackers(SslOpts) ->
+    Trackers0 =
+        case maps:get(session_tickets, SslOpts, disabled) of
+            disabled ->
+                [];
+            _ ->
+                [{session_tickets_tracker, session_tickets_tracker(SslOpts)}]
+        end,
+    %% defaults = true for compatibility with upstream
+    case maps:get(reuse_sessions, SslOpts, true) of
+        true ->
+            {ok, SessionIdHandle} = tls_socket:session_id_tracker(ssl_unknown_listener, SslOpts),
+            [{session_id_tracker, SessionIdHandle} | Trackers0];
+        _ ->
+            Trackers0
+    end.
+
+session_tickets_tracker(SslOpts) ->
+    case erlang:whereis(tls_13_server_session_tickets_for_unknown_listener) of
+        Pid when is_pid(Pid) ->
+            Pid;
+        _ ->
+           LifeTime = ssl_config:get_ticket_lifetime(),
+           TicketStoreSize = ssl_config:get_ticket_store_size(),
+           MaxEarlyDataSize = ssl_config:get_max_early_data_size(),
+           {ok, SessionTicketsHandle} = tls_socket:session_tickets_tracker(ssl_unknown_listener, LifeTime, TicketStoreSize, MaxEarlyDataSize, SslOpts),
+           SessionTicketsHandle
+    end.
 
 %%--------------------------------------------------------------------
 -doc(#{equiv => handshake_continue(HsSocket, Options, infinity)}).

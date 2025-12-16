@@ -52,6 +52,7 @@
          terminate/2, 
          inherit_tracker/3, 
          session_id_tracker/2,
+         session_tickets_tracker/5,
 	 emulated_socket_options/2, 
          get_emulated_opts/1, 
 	 set_emulated_opts/2, 
@@ -276,6 +277,20 @@ session_tickets_tracker(ListenSocket, Lifetime, TicketStoreSize, MaxEarlyDataSiz
     end;
 session_tickets_tracker(_,_, _, _, #{session_tickets := disabled}) ->
     {ok, disabled};
+session_tickets_tracker(ssl_unknown_listener, Lifetime, TicketStoreSize, MaxEarlyDataSize,
+                        #{session_tickets := Mode,
+                          anti_replay := AntiReplay,
+                          stateless_tickets_seed := Seed}) ->
+    %% In case two upgrade servers are started very close to each other
+    %% only one will be able to start and we will use that process
+    case tls_server_session_ticket_sup:start_child([ssl_unknown_listener, Mode, Lifetime,
+                                                     TicketStoreSize, MaxEarlyDataSize,
+                                                     AntiReplay, Seed]) of
+        {error, {already_started, Child}} ->
+            {ok, Child};
+        {ok, _} = Return ->
+            Return
+    end;
 session_tickets_tracker(ListenSocket, Lifetime, TicketStoreSize, MaxEarlyDataSize,
                         #{session_tickets := Mode,
                           anti_replay := AntiReplay,
