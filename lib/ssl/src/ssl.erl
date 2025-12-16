@@ -2537,14 +2537,11 @@ build_trackers(SslOpts) ->
             _ ->
                 [{session_tickets_tracker, session_tickets_tracker(SslOpts)}]
         end,
-    %% defaults = true for compatibility with upstream
-    case maps:get(reuse_sessions, SslOpts, true) of
-        true ->
-            {ok, SessionIdHandle} = tls_socket:session_id_tracker(ssl_unknown_listener, SslOpts),
-            [{session_id_tracker, SessionIdHandle} | Trackers0];
-        _ ->
-            Trackers0
-    end.
+    %% Regardless of the option reuse_sessions we need the session_id_tracker
+    %% to generate session ids, but no sessions will be stored unless
+    %% reuse_sessions = true.
+    {ok, SessionIdHandle} = tls_socket:session_id_tracker(ssl_unknown_listener, SslOpts),
+    [{session_id_tracker, SessionIdHandle} | Trackers0].
 
 session_tickets_tracker(SslOpts) ->
     case erlang:whereis(tls_13_server_session_tickets_for_unknown_listener) of
