@@ -89,7 +89,14 @@ use(Pid, Identifiers, Prf, HandshakeHist) ->
 init([Listener | Args]) ->
     process_flag(trap_exit, true),
     proc_lib:set_label({tls_13_server_session_tickets, Listener}),
-    Monitor = inet:monitor(Listener),
+    Monitor =
+        case Listener of
+            ssl_unknown_listener ->
+                erlang:register(tls_13_server_session_tickets_for_unknown_listener, self()),
+                undefined;
+            _ ->
+                inet:monitor(Listener)
+        end,
     State = initial_state(Args),
     {ok, State#state{listen_monitor = Monitor}}.
 
