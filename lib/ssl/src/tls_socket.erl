@@ -139,9 +139,28 @@ upgrade(server, Socket, #config{transport_info = CbInfo,
     ok = setopts(Transport, Socket, internal_inet_values(Transport)),
     {ok, Port} = port(Transport, Socket),
     {ok, SessionIdHandle} = session_id_tracker(ssl_unknown_listener, SslOpts),
-    Trackers = [{session_id_tracker, SessionIdHandle}],
+    TicketTracker = maybe_ticket_tracker(SslOpts),
+    Trackers = [{session_id_tracker, SessionIdHandle} | TicketTracker],
     {ok, SSocket} = start_tls_server_connection(SslOpts, Port, Socket, EmOpts, Trackers, CbInfo),
     ssl_gen_statem:handshake(SSocket, Timeout).
+
+maybe_ticket_tracker(SslOpts) ->
+    case maps:get(session_tickets, SslOpts, disabled) of
+        disabled -> [];
+        _ -> [{session_tickets_tracker, session_tickets_tracker(SslOpts)}]
+    end.
+
+session_tickets_tracker(SslOpts) ->
+    case erlang:whereis(tls_13_server_session_tickets_for_unknown_listener) of
+        Pid when is_pid(Pid) ->
+            Pid;
+        _ ->
+           LifeTime = ssl_config:get_ticket_lifetime(),
+           TicketStoreSize = ssl_config:get_ticket_store_size(),
+           MaxEarlyDataSize = ssl_config:get_max_early_data_size(),
+           {ok, SessionTicketsHandle} = session_tickets_tracker(ssl_unknown_listener, LifeTime, TicketStoreSize, MaxEarlyDataSize, SslOpts),
+           SessionTicketsHandle
+    end.
 
 connect(Host, Port,
 	#config{transport_info = CbInfo, inet_user = UserOpts, ssl = SslOpts,
@@ -312,6 +331,20 @@ session_tickets_tracker(ListenSocket, Lifetime, TicketStoreSize, MaxEarlyDataSiz
     end;
 session_tickets_tracker(_,_, _, _, #{session_tickets := disabled}) ->
     {ok, disabled};
+session_tickets_tracker(ssl_unknown_listener, Lifetime, TicketStoreSize, MaxEarlyDataSize,
+                        #{session_tickets := Mode,
+                          anti_replay := AntiReplay,
+                          stateless_tickets_seed := Seed}) ->
+    %% In case two upgrade servers are started very close to each other
+    %% only one will be able to start and we will use that process
+    case tls_server_session_ticket_sup:start_child([ssl_unknown_listener, Mode, Lifetime,
+                                                     TicketStoreSize, MaxEarlyDataSize,
+                                                     AntiReplay, Seed]) of
+        {error, {already_started, Child}} ->
+            {ok, Child};
+        {ok, _} = Return ->
+            Return
+    end;
 session_tickets_tracker(ListenSocket, Lifetime, TicketStoreSize, MaxEarlyDataSize,
                         #{session_tickets := Mode,
                           anti_replay := AntiReplay,
