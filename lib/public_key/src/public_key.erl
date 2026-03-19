@@ -723,7 +723,6 @@ get_asn1_module('IssuerAndSerialNumber') -> 'CryptographicMessageSyntax-2009';
 get_asn1_module('OCSPRequest') -> 'OCSP-2024-08';
 get_asn1_module('CertID') -> 'OCSP-2024-08';
 get_asn1_module('Nonce') -> 'OCSP-2024-08';
-get_asn1_module('OCSPRequest') -> 'OCSP-2024-08';
 get_asn1_module('OCSPResponse') -> 'OCSP-2024-08';
 get_asn1_module('BasicOCSPResponse') -> 'OCSP-2024-08';
 get_asn1_module('ResponseData') -> 'OCSP-2024-08';
