@@ -3713,6 +3713,8 @@ reached_max_heap_size(Process *p, Uint total_heap_size,
     if (ERTS_IS_P_TRACED_FL(p, F_TRACE_GC) ||
         max_heap_flags & MAX_HEAP_SIZE_LOG) {
         Eterm msg;
+        Eterm label;
+        Uint label_sz=0;
         Uint size = 0;
         Eterm *o_hp , *hp;
         erts_process_gc_info(p, &size, NULL, extra_heap_size,
@@ -3732,6 +3734,7 @@ reached_max_heap_size(Process *p, Uint total_heap_size,
             if (alive)
                 erts_dsprintf(dsbufp, "on node ~p");
             erts_dsprintf(dsbufp, "~n     Context:            maximum heap size reached~n");
+            erts_dsprintf(dsbufp, "     Label:              ~p~n");
             erts_dsprintf(dsbufp, "     Max Heap Size:      ~p~n");
             erts_dsprintf(dsbufp, "     Total Heap Size:    ~p~n");
             erts_dsprintf(dsbufp, "     Kill:               ~p~n");
@@ -3744,7 +3747,14 @@ reached_max_heap_size(Process *p, Uint total_heap_size,
             erts_factory_tmp_init(&hfact, NULL, 0, ERTS_ALC_T_TMP);
             stacktrace = erts_build_stacktrace(&hfact, p, 0,
                                                erts_backtrace_depth, 1);
-            hp = erts_produce_heap(&hfact, 2*(alive ? 9 : 8), 0);
+            /* Extract process label from process dictionary */
+            /* Always print label: if not set, erts_pd_hash_get returns am_undefined */
+            label = erts_pd_hash_get(p, am_DollarProcessLabel);
+            label_sz = is_immed(label) ? 0 : size_object(label);
+            hp = erts_produce_heap(&hfact, 2*(alive ? 10 : 9) + label_sz, 0);
+            if (label_sz) {
+                label = copy_struct(label, label_sz, &hp, hfact.off_heap);
+            }
             args = CONS(hp, stacktrace, args); hp += 2;
             args = CONS(hp, msg, args); hp += 2;
             args = CONS(hp, make_small((p)->sig_qs.mq_len), args); hp += 2;
@@ -3752,6 +3762,7 @@ reached_max_heap_size(Process *p, Uint total_heap_size,
             args = CONS(hp, (max_heap_flags & MAX_HEAP_SIZE_KILL ? am_true : am_false), args); hp += 2;
             args = CONS(hp, make_small(total_heap_size), args); hp += 2;
             args = CONS(hp, make_small(MAX_HEAP_SIZE_GET(p)), args); hp += 2;
+            args = CONS(hp, label, args); hp += 2;
             if (alive) {
                 args = CONS(hp, erts_this_node->sysname, args); hp += 2;
             }

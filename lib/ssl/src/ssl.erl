@@ -129,6 +129,9 @@ Special Erlang node configuration for the application can be found in
 %% Tracing
 -export([handle_trace/3]).
 
+%% EMQ fork
+-export([default_cacerts/0]).
+
 -deprecated([{prf,5,"Use export_key_materials/4 instead. "
               "Note that in OTP 28 the 'testing' way of calling this function will no longer be supported."
               }]).
@@ -1527,8 +1530,11 @@ different semantics for the client and server.
   > a `{missing, ocsp_nonce}` logger event.
 """.
 
--type client_option_cert() :: {verify, Verify ::verify_peer | verify_none} |
-                              {cacerts,  CACerts::[public_key:der_encoded()] | [public_key:combined_cert()]} |
+-type client_option_cert() :: {verify, Verify :: verify_peer | verify_none} |
+                              {cacerts,  CACerts ::
+                                system_defaults |
+                                [public_key:der_encoded()] |
+                                [public_key:combined_cert()]} |
                               {cacertfile, CACertFile::file:filename()} |
                               {server_name_indication, SNI::inet:hostname() | disable} |
                               {customize_hostname_check, HostNameCheckOpts::list()} |
@@ -1861,7 +1867,10 @@ Certificate related options for a server.
 """.
 
 -doc(#{group => <<"Server Options">>}).
--type server_option_cert() :: {cacerts,  CACerts::[public_key:der_encoded()] | [public_key:combined_cert()]} |
+-type server_option_cert() :: {cacerts,  CACerts::
+                                system_defaults |
+                                [public_key:der_encoded()] |
+                                [public_key:combined_cert()]} |
                               {cacertfile,  CACertFile::file:filename()} |
                               {verify, Verify:: verify_none | verify_peer} |
                               {fail_if_no_peer_cert, FailNoPeerCert::boolean()} |
@@ -2141,6 +2150,23 @@ TLS connection keys for which information can be retrieved.
 %%%--------------------------------------------------------------------
 %%% API
 %%%--------------------------------------------------------------------
+
+%% This function is added in EMQ's OTP fork until the upstream provides a similar solution.
+%% The application code can be implement like:
+%%
+%% default_cacerts() ->
+%%     try
+%%         ssl:default_cacerts()
+%%     catch
+%%         _:_ ->
+%%             public_key:cacerts_get()
+%%     end.
+-spec default_cacerts() -> system_defaults.
+default_cacerts() ->
+    system_defaults.
+
+%%--------------------------------------------------------------------
+
 -doc(#{group => <<"Utility Functions">>,
        equiv => start(temporary),
        since => <<"OTP R14B">>}).
