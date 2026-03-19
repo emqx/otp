@@ -1356,7 +1356,8 @@ nopush_or_cork() ->
 
 %% -type packet_option_value() ::
 %%         0 | 1 | 2 | 4 | raw | sunrm |  asn1 |
-%%         cdr | fcgi | line | tpkt | http | httph | http_bin | httph_bin.
+%%         cdr | fcgi | line | tpkt | mqtt |
+%%         http | httph | http_bin | httph_bin.
 
 -compile({inline, [is_packet_option_value/1]}).
 is_packet_option_value(Value) ->
@@ -1369,6 +1370,7 @@ is_packet_option_value(Value) ->
         fcgi -> true;
         line -> true;
         tpkt -> true;
+        mqtt -> true;
         http -> true;
         httph -> true;
         http_bin -> true;
@@ -2558,6 +2560,7 @@ packet_header_length(PacketType) ->
         sunrm   -> 4;
         fcgi    -> 8;
         tpkt    -> 4;
+        mqtt    -> 2;
         ssl     -> 5;
         ssl_tls -> 5;
         asn1    -> 2;
