@@ -36,8 +36,8 @@
 -include("tls_connection.hrl").
 
 %% Initial Erlang process setup
--export([tls_start_link/7,
-         dtls_start_link/7,
+-export([tls_start_link/2,
+         dtls_start_link/2,
          init/1]).
 
 %% TLS connection setup
@@ -110,37 +110,43 @@
 %%% Initial Erlang process setup
 %%--------------------------------------------------------------------
 %%--------------------------------------------------------------------
--spec tls_start_link(client | server, ssl:host(), inet:port_number(), port(), tuple(), pid(), tuple()) ->
+-spec tls_start_link(pid(), list()) ->
     {ok, pid()} | ignore |  {error, ssl:reason()}.
 %%
 %% Description: Creates a process which calls Module:init/1 to
-%% choose appropriat gen_statem and initialize.
+%% choose appropriate gen_statem and initialize.
 %%--------------------------------------------------------------------
-tls_start_link(Role, Host, Port, Socket, {SslOpts, _, _} = Options, User, CbInfo) ->
-    ReceiverOpts = maps:get(receiver_spawn_opts, SslOpts, []),
-    Opts = [link | proplists:delete(link, ReceiverOpts)],
-    Pid = proc_lib:spawn_opt(?MODULE, init, [[Role, self(), Host, Port, Socket, Options, User, CbInfo]], Opts),
+tls_start_link(ConnSupv, ReceiverSpawnOpts) ->
+    Opts = [link | proplists:delete(link, ReceiverSpawnOpts)],
+    Pid = proc_lib:spawn_opt(?MODULE, init, [ConnSupv], Opts),
     {ok, Pid}.
 
 %%--------------------------------------------------------------------
--spec dtls_start_link(client | server, ssl:host(), inet:port_number(), port(), tuple(), pid(), tuple()) ->
+-spec dtls_start_link(pid(), list()) ->
 			{ok, pid()} | ignore |  {error, ssl:reason()}.
 %%
 %% Description: Creates a gen_statem process which calls Module:init/1 to
 %% initialize.
 %%--------------------------------------------------------------------
-dtls_start_link(Role, Host, Port, Socket, {SslOpts, _, _} = Options, User, CbInfo) ->
-    ReceiverOpts = maps:get(receiver_spawn_opts, SslOpts, []),
-    Opts = [link | proplists:delete(link, ReceiverOpts)],
-    Pid = proc_lib:spawn_opt(?MODULE, init, [[Role, Host, Port, Socket, Options, User, CbInfo]], Opts),
+dtls_start_link(ConnSupv, ReceiverSpawnOpts) ->
+    Opts = [link | proplists:delete(link, ReceiverSpawnOpts)],
+    Pid = proc_lib:spawn_opt(?MODULE, init, [ConnSupv], Opts),
     {ok, Pid}.
 
 
 %%--------------------------------------------------------------------
--spec init(list()) -> no_return().
+-spec init(pid()) -> no_return().
 %% Description: Initialization
+%%   We are linked through the supervisors here so either we die or get
+%%   the message from the supervisor.
 %%--------------------------------------------------------------------
-init([Role, Sup, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo]) ->
+init(ConnSupv) ->
+    receive
+        {ConnSupv, options, Args} ->
+            init_statem(Args)
+    end.
+
+init_statem([Role, Sup, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo]) ->
     process_flag(trap_exit, true),
 
     {ok, {_, Sender,_,_}} = supervisor:which_child(Sup, sender),
@@ -176,7 +182,7 @@ init([Role, Sup, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo])
                     tls_server_connection:init([Role, Sender, Tab|InitArgs])
             end
     end;
-init([Role, Host, Port, Socket, {DTLSOpts,EmOpts,Trackers}, User, CbInfo]) ->
+init_statem([Role, Host, Port, Socket, {DTLSOpts,EmOpts,Trackers}, User, CbInfo]) ->
     process_flag(trap_exit, true),
 
     init_label(Role, Host, Port, DTLSOpts),
