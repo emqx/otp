@@ -713,8 +713,8 @@ jobs:
   system-test:
     name: Test Erlang/OTP (system)
     runs-on: ubuntu-latest
-    if: ${{ !cancelled() }} # Run even if the need has failed
-    needs: test
+    if: ${{ !cancelled() && needs.pack.result == 'success' }} # Run even if the need has failed
+    needs: [pack, test]     # it makes no sense to run this if there is no build image (pack job)
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: ./.github/actions/build-base-image
