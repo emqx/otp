@@ -1655,6 +1655,9 @@ last_consistent_replica(Cs, Tab, Downs) ->
 	    true -> LocalMaster0
 	end,
     if
+    Tab == mria_schema orelse Tab =:= '$mria_rlog_sync' ->
+        %% For EMQX/mria
+        {true, {Tab, ram_only}};
 	Copies == [node()]  ->
 	    %% Only one copy holder and it is local.
 	    %% It may also be a local contents table
