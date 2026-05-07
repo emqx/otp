@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2002-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -816,14 +816,20 @@ suse_release(Fd) ->
 
 find_rel_ubuntu(_Rel, UbuntuRel) when is_integer(UbuntuRel), UbuntuRel < 16 ->
     [];
-find_rel_ubuntu(Rel, UbuntuRel) when is_integer(UbuntuRel) ->
+find_rel_ubuntu(_Rel, UbuntuRel) when is_integer(UbuntuRel), UbuntuRel < 20 ->
+    find_rel_ubuntu(_Rel, 16, UbuntuRel);
+find_rel_ubuntu(_Rel, UbuntuRel) when is_integer(UbuntuRel) ->
+    find_rel_ubuntu(_Rel, 20, UbuntuRel).
+
+find_rel_ubuntu(Rel, MinUbuntuRel, MaxUbuntuRel) when
+      is_integer(MinUbuntuRel), is_integer(MaxUbuntuRel) ->
     Root = "/usr/local/otp/releases/ubuntu",
     lists:foldl(fun (ChkUbuntuRel, Acc) ->
                         find_rel_ubuntu_aux1(Rel, Root++integer_to_list(ChkUbuntuRel))
                             ++ Acc
                 end,
                 [],
-                lists:seq(16, UbuntuRel)).
+                lists:seq(MinUbuntuRel, MaxUbuntuRel)).
 
 find_rel_ubuntu_aux1(Rel, RootWc) ->
     case erlang:system_info(wordsize) of

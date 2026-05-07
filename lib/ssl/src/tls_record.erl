@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -202,7 +202,7 @@ encode_data(Data, Version,
 
 %%--------------------------------------------------------------------
 -spec decode_cipher_text(tls_version(), #ssl_tls{}, ssl_record:connection_states(), boolean()) ->
-				{#ssl_tls{} | trial_decryption_failed,
+				{#ssl_tls{} | no_record,
                                  ssl_record:connection_states()}| #alert{}.
 %%
 %% Description: Decode cipher text
@@ -498,10 +498,10 @@ initial_connection_state(ConnectionEnd, BeastMitigation, MaxEarlyDataSize) ->
       secure_renegotiation => undefined,
       client_verify_data => undefined,
       server_verify_data => undefined,
-      max_early_data_size => MaxEarlyDataSize,
+      pending_early_data_size => MaxEarlyDataSize,
       max_fragment_length => undefined,
       trial_decryption => false,
-      early_data_limit => false
+      early_data_expected => false
      }.
 
 %% Used by logging to recreate the received bytes

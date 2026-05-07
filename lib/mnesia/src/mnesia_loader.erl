@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1998-2022. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -238,6 +238,7 @@ do_get_network_copy(Tab, Reason, Ns, Storage, Cs) ->
 		    dbg_out("Table ~tp copied from ~p to ~p~n", [Tab, Node, node()]),
 		    {loaded, ok};
 		Err = {error, _} when element(1, Reason) == dumper ->
+                    verbose("Copy failed: ~tp ~p~n", [Tab, Err]),
 		    {not_loaded,Err};
 		restart ->
 		    try_net_load_table(Tab, Reason, Tail ++ [Node], Cs);
@@ -351,6 +352,7 @@ start_receiver(Tab,Storage,Cs,SenderPid,TabSize,DetsData,{dumper,{add_table_copy
     Init = table_init_fun(SenderPid, Storage),
     case do_init_table(Tab,Storage,Cs,SenderPid,TabSize,DetsData,self(), Init) of
 	Err = {error, _} ->
+            verbose("Init table failed: ~tp ~p~n", [Tab, Err]),
 	    SenderPid ! {copier_done, node()},
 	    Err;
 	Else ->
@@ -375,6 +377,7 @@ wait_on_load_complete(Pid) ->
 	{Pid, Res} ->
 	    Res;
 	{'EXIT', Pid, Reason} ->
+            verbose("Loader crashed : ~tp ~p~n", [Pid, Reason]),
 	    error(Reason);
 	Else ->
 	    Pid ! Else,

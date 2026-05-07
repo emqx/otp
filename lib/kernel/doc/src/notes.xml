@@ -31,6 +31,112 @@
   </header>
   <p>This document describes the changes made to the Kernel application.</p>
 
+<section><title>Kernel 8.3.2.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    gen_tcp:connect with socket address and socket (inet-)
+	    backend fails because of missing callback function.</p>
+          <p>
+	    Own Id: OTP-18707 Aux Id: #7530 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Spec for function net:if_names/0 incorrect</p>
+          <p>
+	    Own Id: OTP-18296 Aux Id: OTP-16464 </p>
+        </item>
+        <item>
+          <p>
+	    Missing ctrl option name transation for TOS and TTL (on
+	    FreeBSD) when using gen_udp with the 'socket'
+	    inet_backend.</p>
+          <p>
+	    Own Id: OTP-18315</p>
+        </item>
+        <item>
+          <p>
+	    The tcp connect option 'bind_to_device' could not be used
+	    with inet_backend = 'socket'. 'inet' requires value type
+	    binarry() and 'socket' requires value type 'string()'.</p>
+          <p>
+	    Own Id: OTP-18357 Aux Id: #6509 </p>
+        </item>
+        <item>
+          <p>
+	    Minor issue processing options when calling
+	    gen_tcp:connect with a sockaddr() and inet_backend =
+	    socket.</p>
+          <p>
+	    Own Id: OTP-18358 Aux Id: #6528 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Improve warning message format for gen_tcp_socket.</p>
+          <p>
+	    Own Id: OTP-18317</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3.2.2</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    A new function <seemfa
+	    marker="kernel:global#disconnect/0"><c>global:disconnect/0</c></seemfa>
+	    has been introduced with which one can cleanly disconnect
+	    a node from all other nodes in a cluster of <c>global</c>
+	    nodes.</p>
+          <p>
+	    Own Id: OTP-18232 Aux Id: OTP-17843, PR-6264 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A call to <seemfa
+	    marker="net_kernel#setopts/2"><c>net_kernel:setopts(new,
+	    Opts)</c></seemfa> at the same time as a connection was
+	    being set up could cause a deadlock between the
+	    <c>net_kernel</c> process and the process setting up the
+	    connection.</p>
+          <p>
+	    Own Id: OTP-18198 Aux Id: GH-6129, PR-6216 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Kernel 8.3.2</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>

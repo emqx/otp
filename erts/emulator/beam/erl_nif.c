@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2009-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2009-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -404,7 +404,7 @@ erts_call_dirty_nif(ErtsSchedulerData *esdp,
     env.proc->ftrace = NIL;
     env.proc->i = c_p->i;
 
-    ASSERT(ERTS_SCHEDULER_IS_DIRTY(erts_proc_sched_data(c_p)));
+    ASSERT(ERTS_SCHEDULER_IS_DIRTY(erts_get_scheduler_data()));
 
     erts_atomic32_read_band_mb(&c_p->state, ~(ERTS_PSFLG_DIRTY_CPU_PROC
 						   | ERTS_PSFLG_DIRTY_IO_PROC));
@@ -3055,7 +3055,7 @@ dirty_nif_finalizer(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     execution_state(env, &proc, NULL);
 
     ASSERT(argc == 1);
-    ASSERT(!ERTS_SCHEDULER_IS_DIRTY(erts_proc_sched_data(proc)));
+    ASSERT(!ERTS_SCHEDULER_IS_DIRTY(erts_get_scheduler_data()));
     ep = (ErtsNativeFunc*) ERTS_PROC_GET_NFUNC_TRAP_WRAPPER(proc);
     ASSERT(ep);
     nfunc_restore(proc, ep, argv[0]);
@@ -3076,7 +3076,7 @@ dirty_nif_exception(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     execution_state(env, &proc, NULL);
 
     ASSERT(argc == 1);
-    ASSERT(!ERTS_SCHEDULER_IS_DIRTY(erts_proc_sched_data(proc)));
+    ASSERT(!ERTS_SCHEDULER_IS_DIRTY(erts_get_scheduler_data()));
     ep = (ErtsNativeFunc*) ERTS_PROC_GET_NFUNC_TRAP_WRAPPER(proc);
     ASSERT(ep);
     exception = argv[0]; /* argv overwritten by restore below... */
@@ -3796,7 +3796,7 @@ static int examine_iovec_term(Eterm list, UWord max_length, iovec_slice_t *resul
                 result->referenced_size += byte_size;
             }
 
-            result->iovec_len += 1 + byte_size / MAX_SYSIOVEC_IOVLEN;
+            result->iovec_len += (MAX_SYSIOVEC_IOVLEN - 1 + byte_size) / MAX_SYSIOVEC_IOVLEN;
         }
 
         result->sublist_length += 1;

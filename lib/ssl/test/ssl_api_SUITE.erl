@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2019-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1210,7 +1210,7 @@ listen_socket() ->
 listen_socket(Config) ->
     ServerOpts = ssl_test_lib:ssl_options(server_rsa_opts, Config),
     {ok, ListenSocket} = ssl:listen(0, ServerOpts),
-
+    Protocol = proplists:get_value(protocol, ServerOpts, tls),
     %% This can be a valid thing to do as
     %% options are inherited by the accept socket
     ok = ssl:controlling_process(ListenSocket, self()),
@@ -1224,8 +1224,12 @@ listen_socket(Config) ->
     {error, enotconn} = ssl:peercert(ListenSocket),
     {error, enotconn} = ssl:renegotiate(ListenSocket),
     {error, enotconn} = ssl:prf(ListenSocket, 'master_secret', <<"Label">>, [client_random], 256),
-    {error, enotconn} = ssl:shutdown(ListenSocket, read_write),
-
+    case Protocol of
+        tls ->
+            {error, enotconn} = ssl:shutdown(ListenSocket, read_write);
+        dtls ->
+            {error, notsup} = ssl:shutdown(ListenSocket, read_write)
+    end,
     ok = ssl:close(ListenSocket).
 
 %%--------------------------------------------------------------------
@@ -2703,12 +2707,10 @@ check_keylog_info('tlsv1.3', [{keylog, ["CLIENT_HANDSHAKE_TRAFFIC_SECRET"++_,_|_
     {ok, Keylog};
 check_keylog_info('tlsv1.3', []=Keylog, false) ->
     {ok, Keylog};
-check_keylog_info('tlsv1.2', [{keylog, ["CLIENT_RANDOM"++_]=Keylog}], _) ->
+check_keylog_info(_, [{keylog, ["CLIENT_RANDOM"++_]=Keylog}], _) ->
     {ok, Keylog};
-check_keylog_info(NotSup, [], _) when NotSup == 'tlsv1.1'; NotSup == tlsv1; NotSup == 'dtlsv1.2'; NotSup == dtlsv1 ->
-    {ok, []};
-check_keylog_info(_, Unexpected, _) ->
-    {unexpected, Unexpected}.
+check_keylog_info(_, Unexpected, Keep) ->
+    {unexpected, Keep, Unexpected}.
 
 check_srp_in_connection_information(_Socket, _Username, client) ->
     ok;

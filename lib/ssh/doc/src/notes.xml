@@ -30,6 +30,129 @@
     <file>notes.xml</file>
   </header>
 
+<section><title>Ssh 4.13.2.6</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, more secure algorithms are preferred by
+	    ssh and documentation is updated to reflect that.</p>
+          <p>
+	    Own Id: OTP-18986 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, KEX strict terminal message is emitted
+	    with debug verbosity.</p>
+          <p>
+	    Own Id: OTP-19002 Aux Id: ERIERL-1041 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, owner and group file attributes
+	    decoding is fixed and results with value of integer type.</p>
+          <p>
+	    Own Id: OTP-19013 Aux Id: GH-7897, PR-8220 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Ssh 4.13.2.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, Curve25519 and Curve448 KEX methods
+	    become most preferred (related to RFC8731).</p>
+          <p>
+	    Own Id: OTP-18964 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Ssh 4.13.2.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, connection handler does not execute
+	    socket operations until it becomes socket owner.
+	    Previously errors could occur if connection handler tried
+	    to work with socket whose owner exited.</p>
+          <p>
+	    Own Id: OTP-18869 Aux Id: PR-7849,GH-7571 </p>
+        </item>
+        <item>
+          <p>
+	    With this change (being response to CVE-2023-48795), ssh
+	    can negotiate "strict KEX" OpenSSH extension with peers
+	    supporting it; also 'chacha20-poly1305@openssh.com'
+	    algorithm becomes a less preferred cipher.</p>
+          <p>
+	    If strict KEX availability cannot be ensured on both
+	    connection sides, affected encryption modes(CHACHA and
+	    CBC) can be disabled with standard ssh configuration.
+	    This will provide protection against vulnerability, but
+	    at a cost of affecting interoperability. See <seeguide
+	    marker="configure_algos">Configuring algorithms in
+	    SSH</seeguide>.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18897</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Ssh 4.13.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, error logging related crashes in
+	    ssh_connection_handler module are fixed.</p>
+          <p>
+	    Own Id: OTP-18620 Aux Id: OTP-18386,PR-6611 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Ssh 4.13.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, ssh application does not crash when
+	    formatting some of info reports for unsuccessful
+	    connections.</p>
+          <p>
+	    Own Id: OTP-18386 Aux Id: PR-6611 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, ssh does not log extensively long
+	    messages.</p>
+          <p>
+	    Own Id: OTP-18417 Aux Id: DAFH-1349,ERIERL-888,IA18357 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Ssh 4.13.2.1</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -58,8 +58,7 @@
          maybe_add_binders/4,
          maybe_add_early_data_indication/3,
          maybe_automatic_session_resumption/1,
-         maybe_send_early_data/1,
-         update_current_read/3]).
+         maybe_send_early_data/1]).
 
 -export([get_max_early_data/1,
          is_valid_binder/4,
@@ -750,6 +749,7 @@ do_start(#server_hello{cipher_suite = SelectedCipherSuite,
                 handshake_env = #handshake_env{renegotiation = {Renegotiation, _},
                                                ocsp_stapling_state = OcspState},
                 connection_env = #connection_env{negotiated_version = NegotiatedVersion},
+                protocol_specific = PS,
                 ssl_options = #{ciphers := ClientCiphers,
                                 supported_groups := ClientGroups0,
                                 use_ticket := UseTicket,
@@ -823,8 +823,17 @@ do_start(#server_hello{cipher_suite = SelectedCipherSuite,
                   handshake_env = HsEnv#handshake_env{tls_handshake_history = HHistory},
                   key_share = ClientKeyShare},
 
-        {State, wait_sh}
-
+        %% If it is a hello_retry and middlebox mode is
+        %% used assert the change_cipher_spec  message
+        %% that the server should send next
+        case (maps:get(hello_retry, PS, false)) andalso
+            (maps:get(middlebox_comp_mode, SslOpts, true))
+        of
+            true ->
+                {State, hello_retry_middlebox_assert};
+            false ->
+                {State, wait_sh}
+        end
     catch
         {Ref, #alert{} = Alert} ->
             Alert
@@ -868,11 +877,11 @@ do_negotiated({start_handshake, PSK0},
                     ssl_record:step_encryption_state_write(State3);
                 false ->
                     %% Read state is overwritten when handshake secrets are set.
-                    %% Trial_decryption and early_data_limit must be set here!
+                    %% Trial_decryption and early_data_accepted must be set here!
                     update_current_read(
                       ssl_record:step_encryption_state(State3),
                       true,   %% trial_decryption
-                      false   %% early data limit
+                      false   %% early_data_accepted
                     )
 
             end,
@@ -1132,8 +1141,9 @@ do_wait_eoed(#end_of_early_data{}, State0) ->
 %% Upon receiving a message with type server_hello, implementations MUST
 %% first examine the Random value and, if it matches this value, process
 %% it as described in Section 4.1.4).
-maybe_hello_retry_request(#server_hello{random = ?HELLO_RETRY_REQUEST_RANDOM} = ServerHello, State0) ->
-    {error, {State0, start, ServerHello}};
+maybe_hello_retry_request(#server_hello{random = ?HELLO_RETRY_REQUEST_RANDOM} = ServerHello, 
+                          #state{protocol_specific = PS} = State0) ->
+    {error, {State0#state{protocol_specific = PS#{hello_retry => true}}, start, ServerHello}};
 maybe_hello_retry_request(_, _) ->
     ok.
 
@@ -1184,11 +1194,10 @@ maybe_queue_change_cipher_spec(#state{flight_buffer = FlightBuffer0} = State0, l
 %%      first ClientHello.
 %% @end
 maybe_prepend_change_cipher_spec(#state{
-                                    ssl_options =
-                                        #{middlebox_comp_mode := true},
+                                    session = #session{session_id = Id},
                                     handshake_env =
                                         #handshake_env{
-                                           change_cipher_spec_sent = false} = HSEnv} = State, Bin) ->
+                                           change_cipher_spec_sent = false} = HSEnv} = State, Bin) when Id =/= ?EMPTY_ID ->
     CCSBin = create_change_cipher_spec(State),
     {State#state{handshake_env =
                      HSEnv#handshake_env{change_cipher_spec_sent = true}},
@@ -1199,11 +1208,10 @@ maybe_prepend_change_cipher_spec(State, Bin) ->
 %% @doc Appends a change_cipher_spec record to the input binary
 %% @end
 maybe_append_change_cipher_spec(#state{
-                                    ssl_options =
-                                        #{middlebox_comp_mode := true},
+                                   session = #session{session_id = Id},
                                     handshake_env =
                                         #handshake_env{
-                                           change_cipher_spec_sent = false} = HSEnv} = State, Bin) ->
+                                           change_cipher_spec_sent = false} = HSEnv} = State, Bin) when Id =/= ?EMPTY_ID  ->
     CCSBin = create_change_cipher_spec(State),
     {State#state{handshake_env =
                      HSEnv#handshake_env{change_cipher_spec_sent = true}},
@@ -1662,19 +1670,16 @@ calculate_client_early_traffic_secret(
             PendingRead0 = ssl_record:pending_connection_state(ConnectionStates, read),
             PendingRead1 = maybe_store_early_data_secret(KeepSecrets, ClientEarlyTrafficSecret,
                                                          PendingRead0),
-            PendingRead2 = update_connection_state(PendingRead1, undefined, undefined,
+            PendingRead = update_connection_state(PendingRead1, undefined, undefined,
                                                    undefined,
                                                    Key, IV, undefined),
-            %% Signal start of early data. This is to prevent handshake messages to be
-            %% counted in max_early_data_size.
-            PendingRead = PendingRead2#{count_early_data => true},
             State0#state{connection_states = ConnectionStates#{pending_read => PendingRead}}
     end.
 
-update_current_read(#state{connection_states = CS} = State, TrialDecryption, EarlyDataLimit) ->
+update_current_read(#state{connection_states = CS} = State, TrialDecryption, EarlyDataExpected) ->
     Read0 = ssl_record:current_connection_state(CS, read),
     Read = Read0#{trial_decryption => TrialDecryption,
-                  early_data_limit => EarlyDataLimit},
+                  early_data_accepted => EarlyDataExpected},
     State#state{connection_states = CS#{current_read => Read}}.
 
 maybe_store_early_data_secret(true, EarlySecret, State) ->
@@ -2755,8 +2760,8 @@ maybe_send_early_data(#state{
             %% Set 0-RTT traffic keys for sending early_data and EndOfEarlyData
             State3 = ssl_record:step_encryption_state_write(State2),
             {ok, encode_early_data(Cipher, State3)};
-        {ok, {_, _, _, _MaxSize}} ->
-            {error, ?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER, too_much_early_data)};
+        {ok, {_, _, _, MaxSize}} ->
+            {error, ?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER, {too_much_early_data, {max, MaxSize}})};
         {error, Alert} ->
             {error, Alert}
     end;

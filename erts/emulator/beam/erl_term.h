@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -319,7 +319,7 @@ _ET_DECLARE_CHECKED(Uint,header_arity,Eterm)
 #define is_sane_arity_value(x)	((((x) & _TAG_HEADER_MASK) == _TAG_HEADER_ARITYVAL) && \
 				 (((x) >> _HEADER_ARITY_OFFS) <= MAX_ARITYVAL))
 #define is_not_arity_value(x)	(!is_arity_value((x)))
-#define _unchecked_arityval(x)	_unchecked_header_arity((x))
+#define _unchecked_arityval(x)	((x) >> _HEADER_ARITY_OFFS)
 _ET_DECLARE_CHECKED(Uint,arityval,Eterm)
 #define arityval(x)		_ET_APPLY(arityval,(x))
 
@@ -411,7 +411,12 @@ _ET_DECLARE_CHECKED(Eterm,bignum_header_neg,Eterm)
 #define _unchecked_bignum_header_arity(x)	_unchecked_header_arity((x))
 _ET_DECLARE_CHECKED(Uint,bignum_header_arity,Eterm)
 #define bignum_header_arity(x)	_ET_APPLY(bignum_header_arity,(x))
-#define BIG_ARITY_MAX		((1 << 19)-1)
+
+#if defined(ARCH_64)
+#  define BIG_ARITY_MAX		((1 << 16)-1)
+#else
+#  define BIG_ARITY_MAX		((1 << 17)-1)
+#endif
 #define make_big(x)	make_boxed((x))
 #define is_big(x)	(is_boxed((x)) && _is_bignum_header(*boxed_val((x))))
 #define is_not_big(x)	(!is_big((x)))

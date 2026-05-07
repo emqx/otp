@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2013-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -480,10 +480,10 @@ empty_connection_state(ConnectionEnd, Version,
       secure_renegotiation => undefined,
       client_verify_data => undefined,
       server_verify_data => undefined,
-      max_early_data_size => MaxEarlyDataSize,
+      pending_early_data_size => MaxEarlyDataSize,
       max_fragment_length => undefined,
       trial_decryption => false,
-      early_data_limit => false
+      early_data_accepted => false
      }.
 
 init_security_parameters(?CLIENT, Version) ->

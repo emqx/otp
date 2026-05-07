@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2018-2022. All Rights Reserved.
+ * Copyright Ericsson AB 2018-2023. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -220,7 +220,6 @@ typedef struct {
     Eterm request_id;
 } ErtsCLAData;
 
-static void wait_handle_signals(Process *c_p);
 static void wake_handle_signals(Process *proc);
 
 static int handle_msg_tracing(Process *c_p,
@@ -1565,8 +1564,14 @@ erts_proc_sig_send_dist_to_alias(Eterm alias, ErtsDistExternal *edep,
 
     ASSERT(is_ref(alias));
     pid = erts_get_pid_of_ref(alias);
-    if (!is_internal_pid(pid))
+    if (!is_internal_pid(pid)) {
+        if (hfrag) {
+            /* Fragmented message... */
+            erts_free_dist_ext_copy(erts_get_dist_ext(hfrag));
+            free_message_buffer(hfrag);
+        }
         return;
+    }
 
     /*
      * The receiver can distinguish between these two scenarios by
@@ -2086,15 +2091,17 @@ erts_proc_sig_send_demonitor(ErtsMonitor *mon)
     Uint16 type = mon->type;
     Eterm to = mon->other.item;
 
-    ASSERT(is_internal_pid(to));
+    ASSERT(is_internal_pid(to) || to == am_undefined);
     ASSERT(erts_monitor_is_origin(mon));
     ASSERT(!erts_monitor_is_in_table(mon));
 
     sig->common.tag = ERTS_PROC_SIG_MAKE_TAG(ERTS_SIG_Q_OP_DEMONITOR,
                                              type, 0);
     
-    if (!proc_queue_signal(NULL, to, sig, ERTS_SIG_Q_OP_DEMONITOR))
+    if (is_not_internal_pid(to)
+        || !proc_queue_signal(NULL, to, sig, ERTS_SIG_Q_OP_DEMONITOR)) {
         erts_monitor_release(mon);
+    }
 }
 
 int
@@ -3660,7 +3667,7 @@ convert_to_down_message(Process *c_p,
             hsz += 3;  /* reg name 2-tuple */
         else {
             ASSERT(is_pid(mdp->origin.other.item)
-                   || is_internal_port(mdp->origin.other.item));
+                   || is_port(mdp->origin.other.item));
             hsz += NC_HEAP_SIZE(mdp->origin.other.item);
         }
 
@@ -3705,6 +3712,22 @@ convert_to_down_message(Process *c_p,
                 ERL_MESSAGE_FROM(mp) = mdp->origin.other.item;
             }
             break;
+        case ERTS_MON_TYPE_DIST_PORT: {
+#ifdef DEBUG
+            ErtsMonitorDataExtended *mdep = (ErtsMonitorDataExtended *) mdp;
+#endif
+            ASSERT(mdp->origin.flags & ERTS_ML_FLG_EXTENDED);
+            type = am_port;
+            ASSERT(node == am_undefined);
+            ASSERT(!mdep->dist);
+            ASSERT(is_external_port(from)
+                   && (external_port_dist_entry(from)
+                       == erts_this_dist_entry));
+            node = erts_this_dist_entry->sysname;
+            ASSERT(is_atom(node) && node != am_undefined);
+            ERL_MESSAGE_FROM(mp) = node;
+            break;
+        }
         case ERTS_MON_TYPE_PROC:
             type = am_process;
             if (mdp->origin.other.item == am_undefined) {
@@ -3722,8 +3745,14 @@ convert_to_down_message(Process *c_p,
                 ErtsMonitorDataExtended *mdep;
                 ASSERT(mdp->origin.flags & ERTS_ML_FLG_EXTENDED);
                 mdep = (ErtsMonitorDataExtended *) mdp;
-                ASSERT(mdep->dist);
-                node = mdep->dist->nodename;
+                if (mdep->dist)
+                    node = mdep->dist->nodename;
+                else {
+                    ASSERT(is_external_pid(from));
+                    ASSERT(external_pid_dist_entry(from)
+                           == erts_this_dist_entry);
+                    node = erts_this_dist_entry->sysname;
+                }
             }
             ASSERT(is_atom(node) && node != am_undefined);
             ERL_MESSAGE_FROM(mp) = node;
@@ -4742,8 +4771,7 @@ handle_dist_spawn_reply(Process *c_p, ErtsSigRecvTracing *tracing,
 static int
 handle_dist_spawn_reply_exiting(Process *c_p,
                                 ErtsMessage *sig,
-                                ErtsMonitor **pend_spawn_mon_pp,
-                                Eterm reason)
+                                ErtsProcExitContext *pe_ctxt_p)
 {
     ErtsDistSpawnReplySigData *datap = get_dist_spawn_reply_data(sig);
     Eterm result = datap->result;
@@ -4755,7 +4783,7 @@ handle_dist_spawn_reply_exiting(Process *c_p,
     ASSERT(is_atom(result) || is_external_pid(result));
     ASSERT(is_atom(result) || size_object(result) == EXTERNAL_PID_HEAP_SIZE);
 
-    omon = erts_monitor_tree_lookup(*pend_spawn_mon_pp, datap->ref);
+    omon = erts_monitor_tree_lookup(pe_ctxt_p->pend_spawn_monitors, datap->ref);
     if (!omon) {
         /* May happen when connection concurrently close... */
         ErtsLink *lnk = datap->link;
@@ -4773,7 +4801,7 @@ handle_dist_spawn_reply_exiting(Process *c_p,
         ASSERT(omon->flags & ERTS_ML_FLG_SPAWN_PENDING);
         ASSERT(!datap->link || is_external_pid(result));
 
-        erts_monitor_tree_delete(pend_spawn_mon_pp, omon);
+        erts_monitor_tree_delete(&pe_ctxt_p->pend_spawn_monitors, omon);
         mdp = erts_monitor_to_data(omon);
 
         if (!erts_dist_pend_spawn_exit_delete(&mdp->u.target))
@@ -4794,12 +4822,17 @@ handle_dist_spawn_reply_exiting(Process *c_p,
             ASSERT(!(omon->flags & ERTS_ML_FLG_SPAWN_LINK) || datap->link);
 
             if (datap->link) {
-                /* This link exit *should* have actual reason... */
-                ErtsProcExitContext pectxt = {c_p, reason};
                 /* unless operation has been abandoned... */
-                if (omon->flags & ERTS_ML_FLG_SPAWN_ABANDONED)
-                    pectxt.reason = am_abandoned;
-                erts_proc_exit_handle_link(datap->link, (void *) &pectxt, -1);
+                if (omon->flags & ERTS_ML_FLG_SPAWN_ABANDONED) {
+                    ErtsProcExitContext pectxt = {c_p, am_abandoned};
+                    erts_proc_exit_handle_link(datap->link, (void *) &pectxt, -1);
+                }
+                else {
+                    /* This link exit *should* have actual reason... */
+                    erts_proc_exit_handle_link(datap->link,
+                                               (void *) pe_ctxt_p,
+                                               -1);
+                }
                 cnt++;
             }
         }
@@ -4831,8 +4864,6 @@ handle_alias_message(Process *c_p, ErtsMessage *sig, ErtsMessage ***next_nm_sig)
     ASSERT(is_internal_pid(from) || is_atom(from));
     ASSERT(is_internal_pid_ref(alias));
 
-    ERL_MESSAGE_FROM(sig) = from;
-    
     mon = erts_monitor_tree_lookup(ERTS_P_MONITORS(c_p), alias);
     flags = mon ? mon->flags : (Uint16) 0;
     if (!(flags & ERTS_ML_STATE_ALIAS_MASK)
@@ -4842,17 +4873,13 @@ handle_alias_message(Process *c_p, ErtsMessage *sig, ErtsMessage ***next_nm_sig)
          * drop message...
          */
         remove_nm_sig(c_p, sig, next_nm_sig);
-        /* restored as message... */
-        ERL_MESSAGE_TERM(sig) = msg;
-        if (type == ERTS_SIG_Q_TYPE_DIST)
-            sig->data.heap_frag = &sig->hfrag;
-        else
-            sig->data.attached = data_attached;
         sig->next = NULL;;
         erts_cleanup_messages(sig);
         return 2;
     }
 
+    ERL_MESSAGE_FROM(sig) = from;
+    
     if ((flags & ERTS_ML_STATE_ALIAS_MASK) == ERTS_ML_STATE_ALIAS_ONCE) {
         mon->flags &= ~ERTS_ML_STATE_ALIAS_MASK;
 
@@ -4861,6 +4888,7 @@ handle_alias_message(Process *c_p, ErtsMessage *sig, ErtsMessage ***next_nm_sig)
         erts_pid_ref_delete(alias);
 
         switch (mon->type) {
+        case ERTS_MON_TYPE_DIST_PORT:
         case ERTS_MON_TYPE_ALIAS:
             erts_monitor_release(mon);
             break;
@@ -4968,11 +4996,7 @@ erts_proc_sig_handle_incoming(Process *c_p, erts_aint32_t *statep,
     ErtsMessage *sig, ***next_nm_sig;
     ErtsSigRecvTracing tracing;
 
-    ASSERT(!(c_p->sig_qs.flags & FS_WAIT_HANDLE_SIGS));
-    if (c_p->sig_qs.flags & FS_HANDLING_SIGS)
-        wait_handle_signals(c_p);
-    else
-        c_p->sig_qs.flags |= FS_HANDLING_SIGS;
+    ASSERT(!(c_p->sig_qs.flags & (FS_WAIT_HANDLE_SIGS|FS_HANDLING_SIGS)));
 
     ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE(c_p, 0);
     ERTS_LC_ASSERT(ERTS_PROC_LOCK_MAIN == erts_proc_lc_my_proc_locks(c_p));
@@ -4985,6 +5009,8 @@ erts_proc_sig_handle_incoming(Process *c_p, erts_aint32_t *statep,
             erts_proc_unlock(c_p, ERTS_PROC_LOCK_MSGQ);
         }
     }
+
+    c_p->sig_qs.flags |= FS_HANDLING_SIGS;
 
     limit = *redsp;
     *redsp = 0;
@@ -5071,6 +5097,7 @@ erts_proc_sig_handle_incoming(Process *c_p, erts_aint32_t *statep,
 
             switch (type) {
             case ERTS_MON_TYPE_DIST_PROC:
+            case ERTS_MON_TYPE_DIST_PORT:
             case ERTS_MON_TYPE_PROC:
             case ERTS_MON_TYPE_PORT:
                 tmon = (ErtsMonitor *) sig;
@@ -5175,6 +5202,7 @@ erts_proc_sig_handle_incoming(Process *c_p, erts_aint32_t *statep,
                                                mdp->ref, c_p->common.id,
                                                NIL, NIL, THE_NON_VALUE);
                     amdp->origin.flags = ERTS_ML_STATE_ALIAS_UNALIAS;
+                    omon->flags &= ~ERTS_ML_STATE_ALIAS_MASK;
                     erts_monitor_tree_replace(&ERTS_P_MONITORS(c_p),
                                               omon,
                                               &amdp->origin);
@@ -5824,9 +5852,9 @@ stretch_limit(Process *c_p, ErtsSigRecvTracing *tp,
 
 int
 erts_proc_sig_handle_exit(Process *c_p, Sint *redsp,
-                          ErtsMonitor **pend_spawn_mon_pp,
-                          Eterm reason)
+                          ErtsProcExitContext *pe_ctxt_p)
 {
+    int yield = 0;
     int cnt;
     Sint limit;
     ErtsMessage *sig, ***next_nm_sig;
@@ -5890,6 +5918,7 @@ erts_proc_sig_handle_exit(Process *c_p, Sint *redsp,
             case ERTS_MON_TYPE_PORT:
             case ERTS_MON_TYPE_PROC:
             case ERTS_MON_TYPE_DIST_PROC:
+            case ERTS_MON_TYPE_DIST_PORT:
             case ERTS_MON_TYPE_NODE:
             case ERTS_MON_TYPE_NODES:
             case ERTS_MON_TYPE_SUSPEND:
@@ -5948,7 +5977,10 @@ erts_proc_sig_handle_exit(Process *c_p, Sint *redsp,
             break;
 
         case ERTS_SIG_Q_OP_UNLINK_ACK:
-            erts_proc_sig_destroy_unlink_op((ErtsSigUnlinkOp *) sig);
+            if (type == ERTS_SIG_Q_TYPE_DIST_LINK)
+                destroy_sig_dist_unlink_op((ErtsSigDistUnlinkOp *) sig);
+            else
+                erts_proc_sig_destroy_unlink_op((ErtsSigUnlinkOp *) sig);
             break;
 
         case ERTS_SIG_Q_OP_GROUP_LEADER: {
@@ -5969,17 +6001,15 @@ erts_proc_sig_handle_exit(Process *c_p, Sint *redsp,
             handle_sync_suspend(c_p, sig);
             break;
 
-        case ERTS_SIG_Q_OP_RPC: {
-            int yield = 0;
-            handle_rpc(c_p, (ErtsProcSigRPC *) sig,
-                       cnt, limit, &yield);
+        case ERTS_SIG_Q_OP_RPC:
+            yield = 0;
+            cnt += handle_rpc(c_p, (ErtsProcSigRPC *) sig,
+                              cnt, limit, &yield);
             break;
-        }
 
         case ERTS_SIG_Q_OP_DIST_SPAWN_REPLY: {
-            cnt += handle_dist_spawn_reply_exiting(c_p, sig,
-                                                   pend_spawn_mon_pp,
-                                                   reason);
+            cnt += handle_dist_spawn_reply_exiting(c_p, sig, pe_ctxt_p);
+
             break;
         }
 
@@ -6013,7 +6043,7 @@ erts_proc_sig_handle_exit(Process *c_p, Sint *redsp,
             break;
         }
 
-    } while (cnt >= limit && *next_nm_sig);
+    } while (cnt <= limit && !yield && *next_nm_sig);
 
     *redsp += cnt / ERTS_SIG_REDS_CNT_FACTOR;
 
@@ -6064,6 +6094,7 @@ clear_seq_trace_token(ErtsMessage *sig)
             case ERTS_MON_TYPE_PORT:
             case ERTS_MON_TYPE_PROC:
             case ERTS_MON_TYPE_DIST_PROC:
+            case ERTS_MON_TYPE_DIST_PORT:
             case ERTS_MON_TYPE_NODE:
             case ERTS_MON_TYPE_NODES:
             case ERTS_MON_TYPE_SUSPEND:
@@ -6143,6 +6174,7 @@ erts_proc_sig_signal_size(ErtsSignal *sig)
         case ERTS_MON_TYPE_PORT:
         case ERTS_MON_TYPE_PROC:
         case ERTS_MON_TYPE_DIST_PROC:
+        case ERTS_MON_TYPE_DIST_PORT:
         case ERTS_MON_TYPE_NODE:
         case ERTS_MON_TYPE_SUSPEND:
             size = erts_monitor_size((ErtsMonitor *) sig);
@@ -7289,14 +7321,16 @@ erts_proc_sig_cleanup_queues(Process *c_p)
 #endif
 }
 
-/* Debug */
-
-static void
-wait_handle_signals(Process *c_p)
+void
+erts_proc_sig_do_wait_dirty_handle_signals__(Process *c_p)
 {
     /*
-     * Process needs to wait on a dirty process signal
-     * handler before it can handle signals by itself...
+     * A dirty process signal handler is currently handling
+     * signals for this process, so it is not safe for this
+     * process to continue to execute. This process needs to
+     * wait for the dirty signal handling to complete before
+     * it can continue executing. This since otherwise the
+     * signal queue can be seen in an inconsistent state.
      *
      * This should be a quite rare event. This only occurs
      * when all of the following occurs:
@@ -7305,14 +7339,17 @@ wait_handle_signals(Process *c_p)
      * * A dirty process signal handler starts handling
      *   signals for the process and unlocks the main
      *   lock while doing so. This can currently only
-     *   occur if handling an 'unlink' signal from a port.
+     *   occur if handling an 'unlink' signal from a port, or
+     *   when handling an alias message where the alias
+     *   has been created when monitoring a port using
+     *   '{alias, reply_demonitor}' option.
      * * While the dirty process signal handler is handling
      *   signals for the process, the process stops executing
      *   dirty, gets scheduled on a normal scheduler, and
      *   then tries to handle signals itself.
      *
-     * If the above happens, the normal sceduler executing
-     * the process will wait here until the dirty process
+     * If the above happens, the normal scheduler scheduling
+     * in the process will wait here until the dirty process
      * signal handler is done with the process...
      */
     erts_tse_t *event;
@@ -7340,18 +7377,17 @@ wait_handle_signals(Process *c_p)
     erts_tse_return(event);
 
     c_p->sig_qs.flags &= ~FS_WAIT_HANDLE_SIGS;
-    c_p->sig_qs.flags |= FS_HANDLING_SIGS;
 }
 
 static void
 wake_handle_signals(Process *proc)
 {
     /*
-     * Wake scheduler sleeping in wait_handle_signals()
+     * Wake scheduler waiting in erts_proc_sig_check_wait_dirty_handle_signals()
      * (above)...
      *
-     * This function should only be called by a dirty process
-     * signal handler process...
+     * This function should only be called by a dirty process signal handler
+     * process...
      */
 #ifdef DEBUG
     Process *c_p = erts_get_current_process();
@@ -7368,6 +7404,8 @@ wake_handle_signals(Process *proc)
     proc->sig_qs.flags &= ~FS_HANDLING_SIGS;
     erts_tse_set(proc->scheduler_data->aux_work_data.ssi->event);
 }
+
+/* Debug */
 
 static void
 debug_foreach_sig_heap_frags(ErlHeapFragment *hfrag,
@@ -7457,6 +7495,7 @@ erts_proc_sig_debug_foreach_sig(Process *c_p,
                     case ERTS_MON_TYPE_PORT:
                     case ERTS_MON_TYPE_PROC:
                     case ERTS_MON_TYPE_DIST_PROC:
+                    case ERTS_MON_TYPE_DIST_PORT:
                     case ERTS_MON_TYPE_NODE:
                         mon_func((ErtsMonitor *) sig, arg, -1);
                         break;
@@ -7471,9 +7510,22 @@ erts_proc_sig_debug_foreach_sig(Process *c_p,
 			break;
 		    /* Fall through... */
                 case ERTS_SIG_Q_OP_PERSISTENT_MON_MSG:
-                case ERTS_SIG_Q_OP_ALIAS_MSG:
                     debug_foreach_sig_heap_frags(&sig->hfrag, oh_func, arg);
                     break;
+
+                case ERTS_SIG_Q_OP_ALIAS_MSG: {
+                    void *attached;
+                    ErlHeapFragment *hfp;
+                    (void) get_alias_msg_data(sig, NULL, NULL, NULL, &attached);
+                    if (!attached)
+                        break;
+                    if (attached == ERTS_MSG_COMBINED_HFRAG)
+                        hfp = &sig->hfrag;
+                    else
+                        hfp = (ErlHeapFragment *) attached;
+                    debug_foreach_sig_heap_frags(hfp, oh_func, arg);
+                    break;
+                }
 
                 case ERTS_SIG_Q_OP_DEMONITOR:
                     if (type == ERTS_SIG_Q_TYPE_DIST_PROC_DEMONITOR) {

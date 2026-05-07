@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2002-2022. All Rights Reserved.
+ * Copyright Ericsson AB 2002-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -454,7 +454,11 @@ erts_gc_after_bif_call_lhf(Process* p, ErlHeapFragment *live_hf_end,
 
 	val[0] = result;
 	cost = garbage_collect(p, live_hf_end, 0, val, 1, p->fcalls, 0);
-	result = val[0];
+        if (ERTS_PROC_IS_EXITING(p)) {
+            result = THE_NON_VALUE;
+        } else {
+            result = val[0];
+        }
     }
     BUMP_REDS(p, cost);
 

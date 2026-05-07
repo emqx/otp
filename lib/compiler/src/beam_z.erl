@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2012-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2012-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -85,9 +85,9 @@ undo_renames([{bif,raise,_,_,_}=I|Is0]) ->
 		      (_) -> true
 		   end, Is0),
     [I|undo_renames(Is)];
-undo_renames([{get_hd,Src,Hd},{get_tl,Src,Tl}|Is]) ->
+undo_renames([{get_hd,Src,Hd},{get_tl,Src,Tl}|Is]) when Src =/= Hd ->
     get_list(Src, Hd, Tl, Is);
-undo_renames([{get_tl,Src,Tl},{get_hd,Src,Hd}|Is]) ->
+undo_renames([{get_tl,Src,Tl},{get_hd,Src,Hd}|Is]) when Src =/= Tl ->
     get_list(Src, Hd, Tl, Is);
 undo_renames([{bs_put,_,{bs_put_binary,1,_},
                [{atom,all},{literal,<<>>}]}|Is]) ->

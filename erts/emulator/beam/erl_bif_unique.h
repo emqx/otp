@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2014-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2014-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ void erts_magic_ref_save_bin__(Eterm ref);
 ErtsMagicBinary *erts_magic_ref_lookup_bin__(Uint32 refn[ERTS_REF_NUMBERS]);
 void erts_pid_ref_delete(Eterm ref);
 Eterm erts_pid_ref_lookup__(Uint32 refn[ERTS_REF_NUMBERS]);
-
+Uint erts_pid_ref_table_size(void);
 
 /* strict monotonic counter */
 

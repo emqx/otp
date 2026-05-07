@@ -231,7 +231,8 @@ hello(internal, #client_hello{client_version = ClientVersion} = Hello,
         case choose_tls_fsm(SslOpts, Hello) of
             tls_1_3_fsm ->
                 %% Continue in TLS 1.3 'start' state
-                {next_state, start, State1, [{change_callback_module, tls_connection_1_3}, {next_event, internal, Hello}]};
+                {next_state, start, State1,
+                 [{change_callback_module, tls_connection_1_3}, {next_event, internal, Hello}]};
             tls_1_0_to_1_2_fsm ->
                 {ServerHelloExt, Type, State} = handle_client_hello(Hello, State1),
                 {next_state, hello, State, [{next_event, internal, {common_client_hello, Type, ServerHelloExt}}]}

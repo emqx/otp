@@ -1,8 +1,8 @@
 %%
 %% %CopyrightBegin%
-%%
-%% Copyright Ericsson AB 1997-2021. All Rights Reserved.
-%%
+%% 
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
+%% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -186,7 +186,9 @@ connect(Address, Port, Opts)
 connect(#{family := Fam} = SockAddr, Opts, Timeout)
   when ((Fam =:= inet) orelse (Fam =:= inet6)) ->
     %% Ensure that its a proper sockaddr_in6, with all fields
+    %% ?DBG([{fam, Fam}, {sa, SockAddr}, {opts, Opts}, {timeout, Timeout}]),
     SockAddr2 = inet:ensure_sockaddr(SockAddr),
+    %% ?DBG([{sa2, SockAddr2}]),
     case inet:gen_tcp_module(Opts) of
         {?MODULE, Opts2} ->
             Timer = inet:start_timer(Timeout),
@@ -198,8 +200,8 @@ connect(#{family := Fam} = SockAddr, Opts, Timeout)
                 {'EXIT', Reason} -> exit(Reason);
                 Error            -> Error
             end;
-        {GenTcpMod, Opts} ->
-            GenTcpMod:connect(SockAddr2, Opts, Timeout)
+        {GenTcpMod, Opts3} ->
+            GenTcpMod:connect(SockAddr2, Opts3, Timeout)
     end.
 
 

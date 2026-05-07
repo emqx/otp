@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2012-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2012-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,8 +71,15 @@ Sint erts_list_length(Eterm);
 int erts_is_builtin(Eterm, Eterm, int);
 Uint32 make_hash2(Eterm);
 Uint32 trapping_make_hash2(Eterm, Eterm*, struct process*);
+#ifdef DEBUG
+#  define DBG_HASHMAP_COLLISION_BONANZA
+#endif
+#ifdef DBG_HASHMAP_COLLISION_BONANZA
+Uint32 erts_dbg_hashmap_collision_bonanza(Uint32 hash, Eterm key);
+#endif
 Uint32 make_hash(Eterm);
 Uint32 make_internal_hash(Eterm, Uint32 salt);
+Uint32 make_map_hash(Eterm key);
 
 void erts_save_emu_args(int argc, char **argv);
 Eterm erts_get_emu_args(struct process *c_p);

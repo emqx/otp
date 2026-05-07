@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2008-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2008-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1475,10 +1475,29 @@ static BIF_RETTYPE re_exec_trap(BIF_ALIST_3)
 
     ASSERT(loop_count != 0xFFFFFFFF);
     BUMP_REDS(BIF_P, loop_count / LOOP_FACTOR);
-    if (rc == PCRE_ERROR_LOOP_LIMIT) {
-	/* Trap */
-	BUMP_ALL_REDS(BIF_P);
-	BIF_TRAP3(&re_exec_trap_export, BIF_P, BIF_ARG_1, BIF_ARG_2, BIF_ARG_3);
+    if (rc < 0) {
+        switch (rc) {
+            /* No match... */
+        case PCRE_ERROR_NOMATCH:
+        case PCRE_ERROR_MATCHLIMIT:
+        case PCRE_ERROR_RECURSIONLIMIT:
+            break;
+        case PCRE_ERROR_LOOP_LIMIT:
+            /* Trap */
+            BUMP_ALL_REDS(BIF_P);
+            BIF_TRAP3(&re_exec_trap_export, BIF_P, BIF_ARG_1, BIF_ARG_2, BIF_ARG_3);
+            /* Bad utf8 in subject... */
+        case PCRE_ERROR_SHORTUTF8:
+        case PCRE_ERROR_BADUTF8:
+        case PCRE_ERROR_BADUTF8_OFFSET:
+            cleanup_restart_context(restartp);
+            BIF_ERROR(BIF_P, BADARG);
+        default:
+            /* Something unexpected happened... */
+            ASSERT(! "Unexpected erts_pcre_exec() result");
+            cleanup_restart_context(restartp);
+            BIF_ERROR(BIF_P, EXC_INTERNAL_ERROR);
+        }
     }
     res = build_exec_return(BIF_P, rc, restartp, BIF_ARG_1);
  

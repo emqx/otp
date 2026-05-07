@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -399,34 +399,15 @@ alg(ConnectionHandler) ->
 %%====================================================================
 %% Intitialisation
 %%====================================================================
-
 init([Role, Socket, Opts]) when Role==client ; Role==server ->
-    case inet:peername(Socket) of
-        {ok, PeerAddr} ->
-            try
-                {Protocol, Callback, CloseTag} = ?GET_OPT(transport, Opts),
-                D = #data{starter = ?GET_INTERNAL_OPT(user_pid, Opts),
-                          socket = Socket,
-                          transport_protocol = Protocol,
-                          transport_cb = Callback,
-                          transport_close_tag = CloseTag,
-                          ssh_params = init_ssh_record(Role, Socket, PeerAddr, Opts),
-                          connection_state = init_connection_record(Role, Socket, Opts)
-                         },
-                process_flag(trap_exit, true),
-                {ok, {hello,Role}, D}
-            catch
-                _:{error,Error} -> {stop, {error,Error}};
-                error:Error ->     {stop, {error,Error}}
-            end;
-
-        {error,Error} ->
-            {stop, {error,Error}}
-    end.
+    process_flag(trap_exit, true),
+    %% ssh_params will be updated after receiving socket_control event
+    %% in wait_for_socket state;
+    D = #data{socket = Socket, ssh_params = #ssh{role = Role, opts = Opts}},
+    {ok, {wait_for_socket, Role}, D}.
 
 %%%----------------------------------------------------------------
-%%% Connection start and initalization helpers
-
+%%% Connection start and initialization helpers
 init_connection_record(Role, Socket, Opts) ->
     {WinSz, PktSz} = init_inet_buffers_window(Socket),
     C = #connection{channel_cache = ssh_client_channel:cache_create(),
@@ -576,15 +557,39 @@ renegotiation(_) -> false.
          {next_event,internal,{conn_msg,Msg}}]).
 
 %% . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-
 callback_mode() ->
     [handle_event_function,
      state_enter].
 
-
 %%% ######## {hello, client|server} ####
-%% The very first event that is sent when the we are set as controlling process of Socket
-handle_event(cast, socket_control, {hello,_}=StateName, #data{ssh_params = Ssh0} = D) ->
+%% The very first event that is sent when ssh_connection_handler
+%% becomes owner process for Socket
+handle_event(cast, socket_control, {wait_for_socket, Role},
+             #data{socket = Socket, ssh_params = #ssh{opts = Opts}}) ->
+    case inet:peername(Socket) of
+        {ok, PeerAddr} ->
+            try
+                {Protocol, Callback, CloseTag} = ?GET_OPT(transport, Opts),
+                D = #data{starter = ?GET_INTERNAL_OPT(user_pid, Opts),
+                          socket = Socket,
+                          transport_protocol = Protocol,
+                          transport_cb = Callback,
+                          transport_close_tag = CloseTag,
+                          ssh_params = init_ssh_record(Role, Socket, PeerAddr, Opts),
+                          connection_state = init_connection_record(Role, Socket, Opts)
+                         },
+                NextEvent = {next_event, internal, socket_ready},
+                {next_state, {hello,Role}, D, NextEvent}
+            catch
+                _:{error,Error} -> {stop, {error,Error}};
+                error:Error ->     {stop, {error,Error}}
+            end;
+
+        {error,Error} ->
+            {stop, {shutdown,Error}}
+    end;
+
+handle_event(internal, socket_ready, {hello,_}=StateName, #data{ssh_params = Ssh0} = D) ->
     VsnMsg = ssh_transport:hello_version_msg(string_version(Ssh0)),
     send_bytes(VsnMsg, D),
     case inet:getopts(Socket=D#data.socket, [recbuf]) of
@@ -700,6 +705,16 @@ handle_event(internal, #ssh_msg_disconnect{description=Desc} = Msg, StateName, D
     {Actions,D} = send_replies(RepliesCon, D0),
     disconnect_fun("Received disconnect: "++Desc, D),
     {stop_and_reply, {shutdown,Desc}, Actions, D};
+
+handle_event(internal, #ssh_msg_ignore{}, {_StateName, _Role, init},
+             #data{ssh_params = #ssh{kex_strict_negotiated = true,
+                                     send_sequence = SendSeq,
+                                     recv_sequence = RecvSeq}}) ->
+    ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
+                io_lib:format("strict KEX violation: unexpected SSH_MSG_IGNORE "
+                              "send_sequence = ~p  recv_sequence = ~p",
+                              [SendSeq, RecvSeq])
+               );
 
 handle_event(internal, #ssh_msg_ignore{}, _StateName, _) ->
     keep_state_and_data;
@@ -1091,8 +1106,10 @@ handle_event(info, {Proto, Sock, Info}, {hello,_}, #data{socket = Sock,
     end;
 
 
-handle_event(info, {Proto, Sock, NewData}, StateName, D0 = #data{socket = Sock,
-								 transport_protocol = Proto}) ->
+handle_event(info, {Proto, Sock, NewData}, StateName,
+             D0 = #data{socket = Sock,
+                        transport_protocol = Proto,
+                        ssh_params = SshParams}) ->
     try ssh_transport:handle_packet_part(
 	  D0#data.decrypted_data_buffer,
 	  <<(D0#data.encrypted_data_buffer)/binary, NewData/binary>>,
@@ -1136,10 +1153,11 @@ handle_event(info, {Proto, Sock, NewData}, StateName, D0 = #data{socket = Sock,
 				    ]}
 	    catch
 		C:E:ST  ->
-                    {Shutdown, D} =  
+                    MaxLogItemLen = ?GET_OPT(max_log_item_len,SshParams#ssh.opts),
+                    {Shutdown, D} =
                         ?send_disconnect(?SSH_DISCONNECT_PROTOCOL_ERROR,
-                                         io_lib:format("Bad packet: Decrypted, but can't decode~n~p:~p~n~p",
-                                                       [C,E,ST]),
+                                         io_lib:format("Bad packet: Decrypted, but can't decode~n~p:~p~n~P",
+                                                       [C,E,ST,MaxLogItemLen]),
                                          StateName, D1),
                     {stop, Shutdown, D}
 	    end;
@@ -1170,9 +1188,11 @@ handle_event(info, {Proto, Sock, NewData}, StateName, D0 = #data{socket = Sock,
             {stop, Shutdown, D}
     catch
 	C:E:ST ->
-            {Shutdown, D} =  
+            MaxLogItemLen = ?GET_OPT(max_log_item_len,SshParams#ssh.opts),
+            {Shutdown, D} =
                 ?send_disconnect(?SSH_DISCONNECT_PROTOCOL_ERROR,
-                                 io_lib:format("Bad packet: Couldn't decrypt~n~p:~p~n~p",[C,E,ST]),
+                                 io_lib:format("Bad packet: Couldn't decrypt~n~p:~p~n~P",
+                                               [C,E,ST,MaxLogItemLen]),
                                  StateName, D0),
             {stop, Shutdown, D}
     end;
@@ -1352,6 +1372,10 @@ handle_event(Type, Ev, StateName, D0) ->
 	       ) -> term().
 			
 %% . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+terminate(_, {wait_for_socket, _}, _) ->
+    %% No need to to anything - maybe we have not yet gotten
+    %% control over the socket
+    ok;
 
 terminate(normal, _StateName, D) ->
     close_transport(D);
@@ -1897,7 +1921,7 @@ do_log(F, Reason0, #data{ssh_params=S}) ->
 
 assure_string(S) ->
     try io_lib:format("~s",[S])
-    of _ -> S
+    of Formatted -> Formatted
     catch
         _:_ -> io_lib:format("~p",[S])
     end.

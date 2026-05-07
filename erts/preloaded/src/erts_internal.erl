@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2012-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2012-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -115,6 +115,8 @@
 -export([prepare_loading/2, beamfile_chunk/2, beamfile_module_md5/1]).
 
 -export([no_aux_work_threads/0]).
+
+-export([binary_to_integer/2, list_to_integer/2]).
 
 %%
 %% Await result of send to port
@@ -918,25 +920,30 @@ dist_spawn_request(_Node, _MFA, _Opts, _Type) ->
 
 dist_spawn_init(MFA) ->
     %%
-    %% The argument list is passed as a message
-    %% to the newly created process. This since
-    %% it might be large and require a substantial
-    %% amount of work to decode. This way we put
-    %% this work on the newly created process
-    %% (which can execute in parallel with all
-    %% other tasks) instead of on the distribution
-    %% channel code which is a bottleneck in the
-    %% system.
-    %% 
-    %% erl_create_process() ensures that the
-    %% argument list to use in apply is
-    %% guaranteed to be the first message in the
-    %% message queue.
+    %% The argument list is passed as a message to the newly created process.
+    %% This since it might be large and require a substantial amount of work
+    %% to decode. This way we put this work on the newly created process
+    %% (which can execute in parallel with all other tasks) instead of on the
+    %% distribution channel code which is a bottleneck in the system.
+    %%
+    %% erl_create_process() adds two messages to the message queue. These two
+    %% messages are guaranteed to be first in the message queue. First the
+    %% argument list to use followed by a 'dist_spawn_init' message. The
+    %% 'dist_spawn_init' message makes it possible to detect decode failures
+    %% of the argument list.
     %%
     {M, F, _NoA} = MFA,
     receive
-        A ->
-            erlang:apply(M, F, A)
+        A when A =/= dist_spawn_init ->
+            receive dist_spawn_init -> ok end,
+            erlang:apply(M, F, A);
+        dist_spawn_init ->
+            %% Missing argument list due to faulty encoding of the argument
+            %% list. The failed decode operation of the argument list caused
+            %% the message to be removed from the message queue and also
+            %% scheduled a take down of the connection. We, however, need to
+            % ensure that this process is terminated...
+            exit(argument_list_decode_failure)
     end.
 
 %%
@@ -978,4 +985,21 @@ beamfile_module_md5(_Bin) ->
 -spec no_aux_work_threads() -> pos_integer().
 
 no_aux_work_threads() ->
+    erlang:nif_error(undefined).
+
+%% Helper BIF for binary_to_integer/{1,2}.
+
+-spec binary_to_integer(Bin, Base) -> integer() | big | 'badarg' when
+      Bin :: binary(),
+      Base :: 2..36.
+binary_to_integer(_Bin, _Base) ->
+    erlang:nif_error(undefined).
+
+%% Helper BIF for list_to_integer/{1,2}.
+
+-spec list_to_integer(List, Base) ->
+          {integer(),list()} | 'big' | 'badarg' | 'no_integer' | 'not_a_list' when
+      List :: [any()],
+      Base :: 2..36.
+list_to_integer(_List, _Base) ->
     erlang:nif_error(undefined).

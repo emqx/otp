@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2020-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@
 
 #include "sys.h"
 #include "erl_process.h"
+#include "erl_md5.h"
 
 /* Macros for manipulating locations. */
 #define LINE_INVALID_LOCATION (0)
@@ -44,7 +45,7 @@
 #  define BEAM_NATIVE_MIN_FUNC_SZ 4
 #endif
 
-#define MD5_SIZE 16
+#define MD5_SIZE MD5_DIGEST_LENGTH
 
 typedef struct BeamCodeLineTab_ BeamCodeLineTab;
 

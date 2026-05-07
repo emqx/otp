@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -792,7 +792,7 @@ early_data_trial_decryption_failure(Config) when is_list(Config) ->
     ssl_test_lib:close(Client0),
 
     %% Use ticket
-    Client1 = ssl_test_lib:start_client_error([{node, ClientNode},
+    _Client1 = ssl_test_lib:start_client_error([{node, ClientNode},
                                                {port, Port0}, {host, Hostname},
                                                {mfa, {ssl_test_lib,  %% Short handshake
                                                       verify_active_session_resumption,

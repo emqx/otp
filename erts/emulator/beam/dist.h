@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2021. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2022. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -218,7 +218,7 @@ extern int erts_is_alive;
 #define ERTS_DIST_CTRL_OPT_GET_SIZE     ((Uint32) (1 << 0))
 
 /* for emulator internal testing... */
-extern int erts_dflags_test_remove_hopefull_flags;
+extern Uint64 erts_dflags_test_remove_hopefull_flags;
 
 #ifdef DEBUG
 #define ERTS_DBG_CHK_NO_DIST_LNK(D, R, L) \

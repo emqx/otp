@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2018-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2018-2023. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ ml_get_key(ErtsMonLnkNode *mln)
     case ERTS_MON_TYPE_PROC:
     case ERTS_MON_TYPE_PORT:
     case ERTS_MON_TYPE_DIST_PROC:
+    case ERTS_MON_TYPE_DIST_PORT:
     case ERTS_MON_TYPE_TIME_OFFSET:
     case ERTS_MON_TYPE_RESOURCE: {
         ErtsMonitorData *mdp = erts_monitor_to_data(mln);
@@ -891,6 +892,7 @@ erts_monitor_create(Uint16 type, Eterm ref, Eterm orgn, Eterm trgt, Eterm name, 
             break;
         }
     case ERTS_MON_TYPE_DIST_PROC:
+    case ERTS_MON_TYPE_DIST_PORT:
     case ERTS_MON_TYPE_RESOURCE:
     case ERTS_MON_TYPE_NODE:
     case ERTS_MON_TYPE_NODES: {
@@ -1094,6 +1096,16 @@ erts_monitor_destroy__(ErtsMonitorData *mdp)
                    || ((mdp->origin.flags & ERTS_ML_FLGS_SAME)
                        == (mdp->u.target.flags & ERTS_ML_FLGS_SAME)));
 
+    if (mdp->origin.flags & ERTS_ML_STATE_ALIAS_MASK) {
+        ASSERT(mdp->origin.type == ERTS_MON_TYPE_ALIAS
+               || mdp->origin.type == ERTS_MON_TYPE_PROC
+               || mdp->origin.type == ERTS_MON_TYPE_PORT
+               || mdp->origin.type == ERTS_MON_TYPE_TIME_OFFSET
+               || mdp->origin.type == ERTS_MON_TYPE_DIST_PROC
+               || mdp->origin.type == ERTS_MON_TYPE_DIST_PORT);
+        erts_pid_ref_delete(mdp->ref);
+    }
+
     switch (mdp->origin.type) {
     case ERTS_MON_TYPE_ALIAS:
         ERTS_ML_ASSERT(!(mdp->origin.flags & ERTS_ML_FLG_TAG));
@@ -1203,7 +1215,8 @@ erts_monitor_size(ErtsMonitor *mon)
             && mon->type != ERTS_MON_TYPE_NODES) {
             if (!is_immed(mdep->md.ref))
                 hsz += NC_HEAP_SIZE(mdep->md.ref);
-            if (mon->type == ERTS_MON_TYPE_DIST_PROC) {
+            if (mon->type == ERTS_MON_TYPE_DIST_PROC
+                || mon->type == ERTS_MON_TYPE_DIST_PORT) {
                 if (!is_immed(mdep->md.origin.other.item))
                     hsz += NC_HEAP_SIZE(mdep->md.origin.other.item);
                 if (!is_immed(mdep->md.u.target.other.item))

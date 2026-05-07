@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1999-2021. All Rights Reserved.
+ * Copyright Ericsson AB 1999-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,6 +54,7 @@
 #include "erl_alloc_util.h"
 #include "erl_global_literals.h"
 #include "beam_load.h"
+#include "erl_md5.h"
 
 #ifdef ERTS_ENABLE_LOCK_COUNT
 #include "erl_lock_count.h"
@@ -170,7 +171,7 @@ erts_bld_bin_list(Uint **hpp, Uint *szp, ErlOffHeap* oh, Eterm tail)
     union erl_off_heap_ptr u;
     Eterm res = tail;
     Eterm tuple;
-    struct erts_tmp_aligned_offheap tmp;
+    union erts_tmp_aligned_offheap tmp;
 
     for (u.hdr = oh->first; u.hdr; u.hdr = u.hdr->next) {
         erts_align_offheap(&u, &tmp);
@@ -289,6 +290,11 @@ static int do_make_one_mon_element(ErtsMonitor *mon, void * vpmlc, Sint reds)
     case ERTS_MON_TYPE_DIST_PROC: {
         ERTS_DECL_AM(dist_process);
         t = AM_dist_process;
+        break;
+    }
+    case ERTS_MON_TYPE_DIST_PORT: {
+        ERTS_DECL_AM(dist_port);
+        t = AM_dist_port;
         break;
     }
     case ERTS_MON_TYPE_RESOURCE: {
@@ -578,6 +584,7 @@ static int collect_one_origin_monitor(ErtsMonitor *mon, void *vmicp, Sint reds)
         case ERTS_MON_TYPE_PROC:
         case ERTS_MON_TYPE_PORT:
         case ERTS_MON_TYPE_DIST_PROC:
+        case ERTS_MON_TYPE_DIST_PORT:
         case ERTS_MON_TYPE_TIME_OFFSET:
             if (mon->flags & ERTS_ML_FLG_SPAWN_PENDING)
                 break; /* Not an active monitor... */
@@ -630,6 +637,7 @@ static int collect_one_target_monitor(ErtsMonitor *mon, void *vmicp, Sint reds)
         case ERTS_MON_TYPE_PROC:
         case ERTS_MON_TYPE_PORT:
         case ERTS_MON_TYPE_DIST_PROC:
+        case ERTS_MON_TYPE_DIST_PORT:
 
             micp->mi[micp->mi_i].entity.term = mon->other.item;
             micp->mi[micp->mi_i].node = NIL;
@@ -1220,7 +1228,7 @@ process_info_bif(Process *c_p, Eterm pid, Eterm opt, int always_wrap, int pi2)
             ASSERT(locks & ERTS_PROC_LOCK_MAIN);
             erts_proc_lock(rp, ERTS_PROC_LOCK_MSGQ);
             erts_proc_sig_fetch(rp);
-            if (c_p->sig_qs.cont) {
+            if (rp->sig_qs.cont) {
                 erts_proc_unlock(rp, locks|ERTS_PROC_LOCK_MSGQ);
                 locks = 0;
                 goto send_signal;
@@ -1432,10 +1440,15 @@ process_info_aux(Process *c_p,
 	break;
 
     case ERTS_PI_IX_STATUS: {
-        erts_aint32_t state = erts_atomic32_read_nob(&rp->state);
+        erts_aint32_t state;
+        if (!rp_locks)
+            state = erts_atomic32_read_mb(&rp->state);
+        else
+            state = erts_atomic32_read_nob(&rp->state);
         res = erts_process_state2status(state);
-        if (res == am_running && (state & ERTS_PSFLG_RUNNING_SYS)) {
-            ASSERT(c_p == rp);
+        if (res == am_running
+            && c_p == rp
+            && (state & ERTS_PSFLG_RUNNING_SYS)) {
             ASSERT(flags & ERTS_PI_FLAG_REQUEST_FOR_OTHER);
             if (!(state & (ERTS_PSFLG_ACTIVE
                            | ERTS_PSFLG_SIG_Q
@@ -1511,6 +1524,7 @@ process_info_aux(Process *c_p,
     case ERTS_PI_IX_MESSAGE_QUEUE_LEN: {
         Sint len = rp->sig_qs.len;
         ASSERT(flags & ERTS_PI_FLAG_NEED_MSGQ_LEN);
+        ASSERT((flags & ERTS_PI_FLAG_REQUEST_FOR_OTHER) || !rp->sig_qs.cont);
         ASSERT(len >= 0);
         if (len <= MAX_SMALL)
             res = make_small(len);
@@ -3245,6 +3259,11 @@ BIF_RETTYPE system_info_1(BIF_ALIST_1)
 #endif
     } else if (ERTS_IS_ATOM_STR("system_logger", BIF_ARG_1)) {
         BIF_RET(erts_get_system_logger());
+    } else if (ERTS_IS_ATOM_STR("max_integer", BIF_ARG_1)) {
+        Eterm *hp = HAlloc(BIF_P, BIG_ARITY_MAX+1);
+        hp[0] = make_pos_bignum_header(BIG_ARITY_MAX);
+        sys_memset(hp + 1, 0xff, BIG_ARITY_MAX*sizeof(Eterm));
+        BIF_RET(make_big(hp));
     }
 
     BIF_ERROR(BIF_P, BADARG);
@@ -4149,6 +4168,23 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
         else if (ERTS_IS_ATOM_STR("persistent_term", BIF_ARG_1)) {
             BIF_RET(erts_debug_persistent_term_xtra_info(BIF_P));
         }
+        else if (ERTS_IS_ATOM_STR("pid_ref_table_size", BIF_ARG_1)) {
+            Uint size = erts_pid_ref_table_size();
+	    if (IS_SSMALL(size))
+		BIF_RET(make_small(size));
+	    else {
+		Uint hsz = BIG_UWORD_HEAP_SIZE(size);
+		Eterm *hp = HAlloc(BIF_P, hsz);
+		BIF_RET(uword_to_big(size, hp));
+	    }
+        }
+        else if (ERTS_IS_ATOM_STR("hashmap_collision_bonanza", BIF_ARG_1)) {
+#ifdef DBG_HASHMAP_COLLISION_BONANZA
+            return am_true;
+#else
+            return am_false;
+#endif
+        }
     }
     else if (is_tuple(BIF_ARG_1)) {
 	Eterm* tp = tuple_val(BIF_ARG_1);
@@ -4559,6 +4595,44 @@ test_multizero_timeout_in_timeout(void *vproc)
     erts_start_timer_callback(0, test_multizero_timeout_in_timeout2, vproc);
 }
 
+static Eterm
+proc_sig_block(Process *c_p, void *arg, int *redsp, ErlHeapFragment **bpp)
+{
+    ErtsMonotonicTime time, timeout_time, ms = (ErtsMonotonicTime) (Sint) arg;
+
+    if (redsp)
+        *redsp = 1;
+
+    time = erts_get_monotonic_time(NULL);
+
+    if (ms < 0)
+	timeout_time = time;
+    else
+	timeout_time = time + ERTS_MSEC_TO_MONOTONIC(ms);
+
+    while (time < timeout_time) {
+        ErtsMonotonicTime timeout = timeout_time - time;
+
+#ifdef __WIN32__
+        Sleep((DWORD) ERTS_MONOTONIC_TO_MSEC(timeout));
+#else
+        {
+            ErtsMonotonicTime to = ERTS_MONOTONIC_TO_USEC(timeout);
+            struct timeval tv;
+
+            tv.tv_sec = (long) to / (1000*1000);
+            tv.tv_usec = (long) to % (1000*1000);
+
+            select(0, NULL, NULL, NULL, &tv);
+        }
+#endif
+
+	time = erts_get_monotonic_time(NULL);
+    }
+
+    return am_ok;
+}
+
 BIF_RETTYPE erts_debug_set_internal_state_2(BIF_ALIST_2)
 {
     /*
@@ -4880,24 +4954,21 @@ BIF_RETTYPE erts_debug_set_internal_state_2(BIF_ALIST_2)
             BIF_RET(copy);
         }
         else if (ERTS_IS_ATOM_STR("remove_hopefull_dflags", BIF_ARG_1)) {
-            int old_val, new_val;
+            Uint64 new_val;
 
-            switch (BIF_ARG_2) {
-            case am_true: new_val = !0; break;
-            case am_false: new_val = 0; break;
-            default: BIF_ERROR(BIF_P, BADARG); break;
-            }
+            if (!term_to_Uint64(BIF_ARG_2, &new_val)
+                || (new_val & ~DFLAG_DIST_HOPEFULLY))
+                BIF_ERROR(BIF_P, BADARG);
 
             erts_proc_unlock(BIF_P, ERTS_PROC_LOCK_MAIN);
             erts_thr_progress_block();
             
-            old_val = erts_dflags_test_remove_hopefull_flags;
             erts_dflags_test_remove_hopefull_flags = new_val;
             
             erts_thr_progress_unblock();
             erts_proc_lock(BIF_P, ERTS_PROC_LOCK_MAIN);
 
-            BIF_RET(old_val ? am_true : am_false);
+            BIF_RET(am_ok);
         }
         else if (ERTS_IS_ATOM_STR("code_write_permission", BIF_ARG_1)) {
             /*
@@ -4926,6 +4997,32 @@ BIF_RETTYPE erts_debug_set_internal_state_2(BIF_ALIST_2)
                                           test_multizero_timeout_in_timeout,
                                           (void *) BIF_P);
                 BIF_RET(am_ok);
+            }
+        }
+        else if (ERTS_IS_ATOM_STR("process_uniq_counter", BIF_ARG_1)) {
+            Sint64 counter;
+            if (term_to_Sint64(BIF_ARG_2, &counter)) {
+                BIF_P->uniq = counter;
+                BIF_RET(am_ok);
+            }
+        }
+        else if (ERTS_IS_ATOM_STR("proc_sig_block", BIF_ARG_1)) {
+            if (is_tuple_arity(BIF_ARG_2, 2)) {
+                Eterm *tp = tuple_val(BIF_ARG_2);
+                Sint64 time;
+                if (is_internal_pid(tp[1]) && term_to_Sint64(tp[2], &time)) {
+                    ErtsMonotonicTime wait_time = time;
+                    Eterm res;
+
+                    res = erts_proc_sig_send_rpc_request(BIF_P,
+                                                         tp[1],
+                                                         0,
+                                                         proc_sig_block,
+                                                         (void *) (Sint) wait_time);
+                    if (is_non_value(res))
+                        BIF_RET(am_false);
+                    BIF_RET(am_true);
+                }
             }
         }
     }

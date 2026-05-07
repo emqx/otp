@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1999-2022. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -333,8 +333,7 @@
                                 {beast_mitigation, beast_mitigation()} |
                                 {ssl_imp, ssl_imp()} |
                                 {session_tickets, session_tickets()} |
-                                {key_update_at, key_update_at()} |
-                                {middlebox_comp_mode, middlebox_comp_mode()}.
+                                {key_update_at, key_update_at()}.
 
 -type protocol()                  :: tls | dtls.
 -type handshake_completion()      :: hello | full.
@@ -407,6 +406,7 @@
                                 {max_fragment_length, max_fragment_length()} |
                                 {customize_hostname_check, customize_hostname_check()} |
                                 {fallback, fallback()} |
+                                {middlebox_comp_mode, middlebox_comp_mode()} |
                                 {certificate_authorities, certificate_authorities()} |
                                 {session_tickets, client_session_tickets()} |
                                 {use_ticket, use_ticket()} |
@@ -1265,8 +1265,21 @@ getstat(#sslsocket{pid = [Pid|_], fd = {Transport, Socket, _}},
 %%
 %% Description: Same as gen_tcp:shutdown/2
 %%--------------------------------------------------------------------
-shutdown(#sslsocket{pid = {dtls, #config{}}},_) ->
-    {error, enotconn};
+shutdown(#sslsocket{pid = {dtls, #config{transport_info = Info}}}, _) ->
+    Transport = element(1, Info),
+    %% enotconn is what gen_tcp:shutdown on a listen socket will result with.
+    %% shutdown really is handling TCP functionality not present
+    %% with gen_udp or gen_sctp, but if a callback wrapper is supplied let
+    %% the error be the same as for gen_tcp as a wrapper could have
+    %% supplied it own logic and this is backwards compatible.
+    case Transport of
+        gen_udp ->
+            {error, notsup};
+        gen_sctp ->
+            {error, notsup};
+        _  ->
+            {error, enotconn}
+    end;
 shutdown(#sslsocket{pid = {Listen, #config{transport_info = Info}}}, How) ->
     Transport = element(1, Info),
     Transport:shutdown(Listen, How);
@@ -2085,10 +2098,10 @@ validate_option(cacertfile, undefined, _) ->
    <<>>;
 validate_option(cacertfile, Value, _)
   when is_binary(Value) ->
-    Value;
+    unambiguous_path(Value);
 validate_option(cacertfile, Value, _)
   when is_list(Value), Value =/= ""->
-    binary_filename(Value);
+    binary_filename(unambiguous_path(Value));
 validate_option(cacerts, Value, _)
   when Value == undefined;
        is_list(Value) ->
@@ -2558,7 +2571,7 @@ dtls_validate_versions([Version | Rest], Versions) when  Version == 'dtlsv1';
 dtls_validate_versions([Ver| _], Versions) ->
     throw({error, {options, {Ver, {versions, Versions}}}}).
 
-%% The option cacerts overrides cacertsfile
+%% The option cacerts overrides cacertfile
 ca_cert_default(_,_, [_|_]) ->
     undefined;
 ca_cert_default(verify_none, _, _) ->
@@ -2848,3 +2861,27 @@ add_filter(undefined, Filters) ->
     Filters;
 add_filter(Filter, Filters) ->
     [Filter | Filters].
+
+maybe_client_warn_no_verify(#{verify := verify_none,
+                             warn_verify_none := true,
+                             log_level := LogLevel}, client) ->
+            ssl_logger:log(warning, LogLevel, #{description => "Authenticity is not established by certificate path validation",
+                                                reason => "Option {verify, verify_peer} and cacertfile/cacerts is missing"}, #{});
+maybe_client_warn_no_verify(_,_) ->
+    %% Warning not needed. Note client certificate validation is optional in TLS
+    ok.
+
+unambiguous_path(Value) ->
+    AbsName = filename:absname(Value),
+    case file:read_link(AbsName) of
+        {ok, PathWithNoLink} ->
+            case filename:pathtype(PathWithNoLink) of
+                relative ->
+                    Dirname = filename:dirname(AbsName),
+                    filename:join([Dirname, PathWithNoLink]);
+                _ ->
+                    PathWithNoLink
+            end;
+        _ ->
+            AbsName
+    end.

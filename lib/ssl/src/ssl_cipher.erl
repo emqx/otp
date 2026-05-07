@@ -1,7 +1,7 @@
 %
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -645,7 +645,7 @@ signature_scheme(SignAlgo) when is_integer(SignAlgo) ->
 signature_scheme(_) -> unassigned.
 
 signature_schemes_1_2(SigAlgs) ->
-    lists:foldl(fun(Alg, Acc) when is_atom(Alg) ->
+    lists:reverse(lists:foldl(fun(Alg, Acc) when is_atom(Alg) ->
                         case scheme_to_components(Alg) of
                             {Hash, Sign = rsa_pss_pss,_} ->
                                 [{Hash, Sign} | Acc];
@@ -656,7 +656,7 @@ signature_schemes_1_2(SigAlgs) ->
                         end;
                    (Alg, Acc) ->
                         [Alg| Acc]
-                end, [], SigAlgs).
+                end, [], SigAlgs)).
 
 %% TODO: reserved code points?
 
