@@ -67,13 +67,13 @@ jobs:
       - name: Create initial pre-release tar
         run: .github/scripts/init-pre-release.sh otp_archive.tar.gz
       - name: Upload source tar archive
-        uses: actions/upload-artifact@v3.1.3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: otp_git_archive
           path: otp_archive.tar.gz
       - name: Cache pre-built tar archives
         id: pre-built-cache
-        uses: actions/cache@v3.3.2
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
             path: |
                 otp_src.tar.gz
@@ -108,7 +108,7 @@ jobs:
               '${{ steps.cache.outputs.deleted_files }}' \
               '${{ steps.changes.outputs.changes }}'
       - name: Upload restored cache
-        uses: actions/upload-artifact@v3.1.3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: runner.debug == 1
         with:
           name: restored-cache
@@ -135,7 +135,7 @@ jobs:
             bash -c 'set -x; C_APPS=$(ls -d ./lib/*/c_src); find Makefile ./make ./erts ./bin/`erts/autoconf/config.guess` ./lib/erl_interface ./lib/jinterface ${C_APPS} `echo "${C_APPS}" | sed -e 's:c_src$:priv:'` -type f -newer README.md \! -name "*.beam" \! -path "*/doc/*" | xargs tar --transform "s:^./:otp/:" -uvf /github/otp_cache.tar'
           gzip otp_cache.tar
       - name: Upload pre-built tar archive
-        uses: actions/upload-artifact@v3.1.3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: otp_prebuilt
           path: |
@@ -157,8 +157,8 @@ jobs:
           name: otp_prebuilt
 
       - name: Cache wxWidgets
-        id: wxwidgets-cache
-        uses: actions/cache@v3.3.2
+        id: wxwidgets-cache 
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306
         with:
           path: wxWidgets
           key: wxWidgets-${{ env.WXWIDGETS_VERSION }}-${{ runner.os }}-12
@@ -184,7 +184,7 @@ jobs:
           ./bin/erl -noshell -eval '{wx_ref,_,_,_} = wx:new(), io:format("wx ok~n"), halt().'
 
       - name: Upload tarball
-        uses: actions/upload-artifact@v3.1.3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: otp_prebuilt_macos_x86-64
           path: otp/otp_macos_*_x86-64.tar.gz
@@ -213,7 +213,7 @@ jobs:
           IF EXIST "c:\\Program Files\\OpenSSL-Win64" (move "c:\\Program Files\\OpenSSL-Win64" "c:\\OpenSSL-Win64") ELSE (move "c:\\Program Files\\OpenSSL" "c:\\OpenSSL-Win64")
 
       - name: Cache wxWidgets
-        uses: actions/cache@v3.3.2
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306
         with:
           path: wxWidgets
           key: wxWidgets-${{ env.WXWIDGETS_VERSION }}-${{ runner.os }}
@@ -283,7 +283,7 @@ jobs:
           ./otp_build installer_win32
 
       - name: Upload installer
-        uses: actions/upload-artifact@v3.1.3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: otp_win32_installer
           path: otp/release/win32/otp*.exe
@@ -341,12 +341,12 @@ jobs:
             rm -rf man
             tar czf ../otp_doc_html.tar.gz *
       - name: Upload html documentation archive
-        uses: actions/upload-artifact@v3.1.3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: otp_doc_html
           path: otp_doc_html.tar.gz
       - name: Upload man documentation archive
-        uses: actions/upload-artifact@v3.1.3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: otp_doc_man
           path: otp_doc_man.tar.gz
@@ -449,7 +449,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Upload
-        uses: actions/upload-artifact@v3.1.3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: Event File
           path: ${{ github.event_path }}
