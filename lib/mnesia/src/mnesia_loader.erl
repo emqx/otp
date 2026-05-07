@@ -128,7 +128,7 @@ do_get_disc_copy2(Tab, Reason, Storage, Type) when Storage == disc_only_copies -
     Args = [{file, mnesia_lib:tab2dat(Tab)},
 	    {type, mnesia_lib:disk_type(Tab, Type)},
 	    {keypos, 2},
-	    {repair, mnesia_monitor:get_env(auto_repair)} 
+	    {repair, mnesia_monitor:get_env(auto_repair)}
 	    | DetsOpts],
     case Reason of
 	{dumper, DR} when is_atom(DR) ->
@@ -210,7 +210,19 @@ do_get_network_copy(Tab, _Reason, _Ns, unknown, _Cs) ->
     verbose("Local table copy of ~tp has recently been deleted, ignored.~n", [Tab]),
     {not_loaded, storage_unknown};
 do_get_network_copy(Tab, Reason, Ns, Storage, Cs) ->
-    [Node | Tail] = Ns,
+    [Node | Tail] =
+        case ?catch_val(copy_from_node) of
+            undefined -> Ns;
+            CPNode when is_atom(CPNode) ->
+                case lists:member(CPNode, Ns) of
+                    true ->
+                        [CPNode | Ns -- [CPNode]];
+                    false ->
+                        Ns
+                end;
+            _ ->
+                Ns
+        end,
     case lists:member(Node,val({current, db_nodes})) of
 	true ->
 	    dbg_out("Getting table ~tp (~p) from node ~p: ~tp~n",
@@ -776,7 +788,7 @@ send_table(Pid, Tab, RemoteS, Reason) ->
 	    do_send_table(Pid, Tab, Storage, RemoteS, Reason)
     end.
 
-do_send_table(Pid, Tab, Storage, RemoteS) ->
+do_send_table(Pid, Tab, Storage, RemoteS, LoadReason) ->
     {Init, Chunk} =
 	case Storage of
 	    {ext, Alias, Mod} ->
