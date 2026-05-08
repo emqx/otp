@@ -144,7 +144,7 @@ jobs:
 
   build-macos:
     name: Build Erlang/OTP (macOS)
-    runs-on: macos-12
+    runs-on: macos-15
     needs: pack
     env:
       WXWIDGETS_VERSION: 3.1.5
@@ -161,7 +161,7 @@ jobs:
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306
         with:
           path: wxWidgets
-          key: wxWidgets-${{ env.WXWIDGETS_VERSION }}-${{ runner.os }}-12
+          key: wxWidgets-${{ env.WXWIDGETS_VERSION }}-${{ runner.os }}-15
 
       - name: Compile wxWidgets
         if: steps.wxwidgets-cache.outputs.cache-hit != 'true'
