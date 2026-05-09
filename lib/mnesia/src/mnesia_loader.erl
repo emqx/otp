@@ -786,46 +786,6 @@ send_table(Pid, Tab, RemoteS, Reason) ->
     end.
 
 do_send_table(Pid, Tab, Storage, RemoteS, LoadReason) ->
-    {Init, Chunk} =
-	case Storage of
-	    {ext, Alias, Mod} ->
-		case Mod:sender_init(Alias, Tab, RemoteS, Pid) of
-		    {standard, I, C} ->
-			Pid ! {self(), {first, Mod:info(Alias, Tab, size)}},
-			{I, C};
-		    {_, _} = Res ->
-			Res
-		end;
-	    Storage ->
-		%% Send first
-		TabSize = mnesia:table_info(Tab, size),
-		KeysPerTransfer =
-                case ?catch_val(send_table_batch_size) of
-                    {'EXIT', _} ->
-                        mnesia_lib:set(send_table_batch_size, 0),
-                        calc_nokeys(Storage, Tab);
-                    0 ->
-                        calc_nokeys(Storage, Tab);
-                    Val when is_integer(Val) ->
-                        Val
-                end,
-
-		ChunkData = dets:info(Tab, bchunk_format),
-
-		UseDetsChunk =
-		    Storage == RemoteS andalso
-		    Storage == disc_only_copies andalso
-		    ChunkData /= undefined,
-		if
-		    UseDetsChunk == true ->
-			DetsInfo = erlang:system_info(version),
-			Pid ! {self(), {first, TabSize, {DetsInfo, ChunkData}}};
-		    true  ->
-			Pid ! {self(), {first, TabSize}}
-		end,
-		{_I, _C} =
-		    reader_funcs(UseDetsChunk, Tab, Storage, KeysPerTransfer)
-	end,
     %% Debug info
     put(mnesia_table_sender, {Tab, node(Pid), Pid}),
     try
@@ -961,7 +921,16 @@ get_chunk_func(Pid, Tab, {ext, Alias, Mod}, RemoteS) ->
 get_chunk_func(Pid, Tab, Storage, RemoteS) ->
     try
         TabSize = mnesia:table_info(Tab, size),
-        KeysPerTransfer = calc_nokeys(Storage, Tab),
+        KeysPerTransfer =
+            case ?catch_val(send_table_batch_size) of
+                {'EXIT', _} ->
+                    mnesia_lib:set(send_table_batch_size, 0),
+                    calc_nokeys(Storage, Tab);
+                0 ->
+                    calc_nokeys(Storage, Tab);
+                Val when is_integer(Val) ->
+                    Val
+            end,
         ChunkData = dets:info(Tab, bchunk_format),
         UseDetsChunk =
             Storage == RemoteS andalso
