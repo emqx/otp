@@ -152,8 +152,6 @@ ipv6_probe() -> true.
 %% Connect a socket
 %%
 
-ipv6_probe() -> true.
-
 -spec connect(SockAddr, Opts) -> {ok, Socket} | {error, Reason} when
       SockAddr :: socket:sockaddr_in() | socket:sockaddr_in6() | inet:hostname(),
       Opts     :: [inet:inet_backend() | connect_option()],
