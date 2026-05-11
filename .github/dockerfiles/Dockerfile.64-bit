@@ -12,7 +12,12 @@ RUN cd /buildroot && tar -xzf ./otp.tar.gz
 
 WORKDIR /buildroot/otp/
 
+<<<<<<< upgrade/william/3/OTP-24.3.4.17
 ENV CFLAGS="-O2 -g -Werror"
+=======
+ENV CC=clang CXX=clang++ \
+        CFLAGS="-O2 -g"
+>>>>>>> emqx-OTP-24.3.4
 
 ## Configure (if not cached), check that no application are disabled and then make
 RUN if [ ! -f Makefile ]; then \

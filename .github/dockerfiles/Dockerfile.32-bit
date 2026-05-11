@@ -13,12 +13,19 @@ RUN cd /buildroot && tar -xzf ./otp.tar.gz
 
 WORKDIR /buildroot/otp/
 
-ENV CFLAGS="-O2 -g -Werror"
+ENV CFLAGS="-O2 -g"
 
 ## Configure, check that no application are disabled, then make and then build doc chunks
 RUN ./configure --without-wx --with-ssl --prefix=/otp && \
+<<<<<<< upgrade/william/3/OTP-24.3.4.17
         if cat lib/*/CONF_INFO || cat lib/*/SKIP || cat lib/SKIP-APPLICATIONS; then exit 1; fi && \
     make && make install
+=======
+        if cat lib/*/CONF_INFO || cat lib/*/SKIP || cat lib/SKIP-APPLICATIONS; then exit 1; fi
+
+RUN make && make install && \
+        make install-docs DOC_TARGETS=chunks
+>>>>>>> emqx-OTP-24.3.4
 
 ## Disable -Werror as testcases do not compile with it on
 ENV CFLAGS="-O2 -g"
