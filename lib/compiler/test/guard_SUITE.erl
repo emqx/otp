@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2001-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -2362,6 +2362,7 @@ beam_bool_SUITE(_Config) ->
     erl1384(),
     gh4788(),
     beam_ssa_bool_coverage(),
+    gh_7252(),
     ok.
 
 before_and_inside_if() ->
@@ -2872,6 +2873,33 @@ beam_ssa_bool_coverage_1(V) when V andalso 0, tuple_size(0) ->
     ok;
 beam_ssa_bool_coverage_1(_) ->
     error.
+
+gh_7252() ->
+    bar = gh_7252_a(id(bar), id([])),
+    bar = gh_7252_a(id(bar), id(ok)),
+
+    foo = gh_7252_b(id(ok), id(<<>>)),
+    bar = gh_7252_b(id(ok), id(ok)),
+
+    bar = gh_7252_c(id(ok)),
+
+    ok.
+
+gh_7252_a(_, B) when ((ok == B) and (ok =/= trunc(ok))) or (ok < B) ->
+    foo;
+gh_7252_a(A, _) ->
+    A.
+
+gh_7252_b(A, B)
+  when (true xor is_float(A)) or (is_bitstring(B) orelse <<(ok):(ok)>>) ->
+    foo;
+gh_7252_b(_, _) ->
+    bar.
+
+gh_7252_c(A) when ((ok > A) and ((bnot ok) =:= ok)) or (not (ok > A)) ->
+    foo;
+gh_7252_c(_) ->
+    bar.
 
 %%%
 %%% End of beam_bool_SUITE tests.

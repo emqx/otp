@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,7 +71,7 @@
 #include "ei_locking.h"
 #include "eisend.h"
 #include "eirecv.h"
-#include "eimd5.h"
+#include "erl_md5.h"
 #include "putget.h"
 #include "ei_resolve.h"
 #include "ei_epmd.h"

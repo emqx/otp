@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -125,6 +125,8 @@
          config_error/3,
          user_hello/3,
          start/3,
+         hello_middlebox_assert/3,
+         hello_retry_middlebox_assert/3,
          negotiated/3,
          wait_cert/3,
          wait_cv/3,
@@ -183,7 +185,7 @@ update_cipher_key(ConnStateName, CS0) ->
 %% gen_statem callbacks
 %%--------------------------------------------------------------------
 callback_mode() ->
-    state_functions.
+    [state_functions, state_enter].
 
 init([Role, Sender, Host, Port, Socket, Options,  User, CbInfo]) ->
     State0 = #state{protocol_specific = Map} = initial_state(Role, Sender,
@@ -220,6 +222,8 @@ code_change(_OldVsn, StateName, State, _) ->
 	   {start, timeout()} | term(), #state{}) ->
 		   gen_statem:state_function_result().
 %%--------------------------------------------------------------------
+initial_hello(enter, _, State) ->
+    {keep_state, State};
 initial_hello(Type, Event, State) ->
     ssl_gen_statem:?FUNCTION_NAME(Type, Event, State).
 
@@ -228,10 +232,13 @@ initial_hello(Type, Event, State) ->
 	   {start, timeout()} | term(), #state{}) ->
 		   gen_statem:state_function_result().
 %%--------------------------------------------------------------------
+config_error(enter, _, State) ->
+    {keep_state, State};
 config_error(Type, Event, State) ->
     ssl_gen_statem:?FUNCTION_NAME(Type, Event, State).
 
-
+user_hello(enter, _, State) ->
+    {keep_state, State};
 user_hello({call, From}, cancel, State) ->
     gen_statem:reply(From, ok),
     ssl_gen_statem:handle_own_alert(?ALERT_REC(?FATAL, ?USER_CANCELED, user_canceled),
@@ -269,8 +276,20 @@ user_hello(info, {'DOWN', _, _, _, _} = Event, State) ->
 user_hello(_, _, _) ->
     {keep_state_and_data, [postpone]}.
 
-start(internal, #change_cipher_spec{}, State) ->
-    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State);
+start(enter, _, State0) ->
+    State = handle_middlebox(State0),
+    {next_state, ?FUNCTION_NAME, State,[]};
+start(internal = Type, #change_cipher_spec{} = Msg,
+      #state{static_env = #static_env{role = server},
+             handshake_env = #handshake_env{tls_handshake_history = Hist}} = State) ->
+    case ssl_handshake:init_handshake_history() of
+        Hist -> %% First message must always be client hello
+            ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State);
+        _ ->
+            handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State)
+        end;
+start(internal = Type, #change_cipher_spec{} = Msg, State) ->
+    handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State);
 start(internal, #client_hello{extensions = #{client_hello_versions :=
                                                  #client_hello_versions{versions = ClientVersions}
                                             }} = Hello,
@@ -328,8 +347,11 @@ start(info, Msg, State) ->
 start(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
-negotiated(internal, #change_cipher_spec{}, State) ->
-    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State);
+negotiated(enter, _, State0) ->
+    State = handle_middlebox(State0),
+    {next_state, ?FUNCTION_NAME, State,[]};
+negotiated(internal = Type, #change_cipher_spec{} = Msg, State) ->
+    handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State);
 negotiated(internal, Message, State0) ->
     case tls_handshake_1_3:do_negotiated(Message, State0) of
         #alert{} = Alert ->
@@ -340,8 +362,11 @@ negotiated(internal, Message, State0) ->
 negotiated(info, Msg, State) ->
     tls_gen_connection:handle_info(Msg, ?FUNCTION_NAME, State).
 
-wait_cert(internal, #change_cipher_spec{}, State0) ->
-    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State0);
+wait_cert(enter, _, State0) ->
+    State = handle_middlebox(State0),
+    {next_state, ?FUNCTION_NAME, State,[]};
+wait_cert(internal = Type, #change_cipher_spec{} = Msg, State) ->
+    handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State);
 wait_cert(internal,
           #certificate_1_3{} = Certificate, State0) ->
     case tls_handshake_1_3:do_wait_cert(Certificate, State0) of
@@ -355,8 +380,11 @@ wait_cert(info, Msg, State) ->
 wait_cert(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
-wait_cv(internal, #change_cipher_spec{}, State) ->
-    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State);
+wait_cv(enter, _, State0) ->
+    State = handle_middlebox(State0),
+    {next_state, ?FUNCTION_NAME, State,[]};
+wait_cv(internal = Type, #change_cipher_spec{} = Msg, State) ->
+    handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State);
 wait_cv(internal,
           #certificate_verify_1_3{} = CertificateVerify, State0) ->
     case tls_handshake_1_3:do_wait_cv(CertificateVerify, State0) of
@@ -370,8 +398,11 @@ wait_cv(info, Msg, State) ->
 wait_cv(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
-wait_finished(internal, #change_cipher_spec{}, State0) ->
-    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State0);
+wait_finished(enter, _, State0) ->
+    State = handle_middlebox(State0),
+    {next_state, ?FUNCTION_NAME, State,[]};
+wait_finished(internal = Type, #change_cipher_spec{} = Msg, State) ->
+    handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State);
 wait_finished(internal,
              #finished{} = Finished, State0) ->
     case tls_handshake_1_3:do_wait_finished(Finished, State0) of
@@ -388,31 +419,71 @@ wait_finished(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
 
-wait_sh(internal, #change_cipher_spec{}, State) ->
-    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State);
+wait_sh(enter, _, State0) ->
+    State = handle_middlebox(State0),
+    {next_state, ?FUNCTION_NAME, State,[]};
+wait_sh(internal = Type, #change_cipher_spec{} = Msg, State)->
+    handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State);
 wait_sh(internal, #server_hello{extensions = Extensions},
         #state{handshake_env = #handshake_env{continue_status = pause},
                start_or_recv_from = From} = State) ->
     {next_state, user_hello,
      State#state{start_or_recv_from = undefined}, [{postpone, true},{reply, From, {ok, Extensions}}]};
-wait_sh(internal, #server_hello{} = Hello, State0) ->
+wait_sh(internal, #server_hello{session_id = ?EMPTY_ID} = Hello, #state{session = #session{session_id = ?EMPTY_ID},
+                                                                        ssl_options = #{middlebox_comp_mode := false}} = State0) ->
     case tls_handshake_1_3:do_wait_sh(Hello, State0) of
-        #alert{} = Alert ->
+         #alert{} = Alert ->
             ssl_gen_statem:handle_own_alert(Alert, wait_sh, State0);
         {State1, start, ServerHello} ->
             %% hello_retry_request: go to start
-            {next_state, start, State1, [{next_event, internal, ServerHello}]};
+             {next_state, start, State1, [{next_event, internal, ServerHello}]};
         {State1, wait_ee} ->
-            tls_gen_connection:next_event(wait_ee, no_record, State1)
+             tls_gen_connection:next_event(wait_ee, no_record, State1)
+    end;
+wait_sh(internal, #server_hello{} = Hello,
+        #state{protocol_specific = PS, ssl_options = #{middlebox_comp_mode := true}} = State0) ->
+    IsRetry = maps:get(hello_retry, PS, false),
+    case tls_handshake_1_3:do_wait_sh(Hello, State0) of
+        #alert{} = Alert ->
+            ssl_gen_statem:handle_own_alert(Alert, wait_sh, State0);
+        {State1 = #state{}, start, ServerHello} ->
+            %% hello_retry_request: go to start
+            {next_state, start, State1, [{next_event, internal, ServerHello}]};
+        {State1, wait_ee} when IsRetry == true ->
+            tls_gen_connection:next_event(wait_ee, no_record, State1);
+        {State1, wait_ee} when IsRetry == false ->
+            tls_gen_connection:next_event(hello_middlebox_assert, no_record, State1)
     end;
 wait_sh(info, Msg, State) ->
     tls_gen_connection:handle_info(Msg, ?FUNCTION_NAME, State);
 wait_sh(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
+hello_middlebox_assert(enter, _, State) ->
+    {keep_state, State};
+hello_middlebox_assert(internal, #change_cipher_spec{}, State) ->
+    tls_gen_connection:next_event(wait_ee, no_record, State);
+hello_middlebox_assert(info, Msg, State) ->
+    tls_gen_connection:handle_info(Msg, ?FUNCTION_NAME, State);
+hello_middlebox_assert(Type, Msg, State) ->
+    ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
-wait_ee(internal, #change_cipher_spec{}, State) ->
-    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State);
+hello_retry_middlebox_assert(enter, _, State) ->
+    {keep_state, State};
+hello_retry_middlebox_assert(internal, #change_cipher_spec{}, State) ->
+    tls_gen_connection:next_event(wait_sh, no_record, State);
+hello_retry_middlebox_assert(internal, #server_hello{}, State) ->
+    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State, [postpone]);
+hello_retry_middlebox_assert(info, Msg, State) ->
+    tls_gen_connection:handle_info(Msg, ?FUNCTION_NAME, State);
+hello_retry_middlebox_assert(Type, Msg, State) ->
+    ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
+
+wait_ee(enter, _, State0) ->
+    State = handle_middlebox(State0),
+    {next_state, ?FUNCTION_NAME, State,[]};
+wait_ee(internal = Type, #change_cipher_spec{} = Msg, State) ->
+    handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State);
 wait_ee(internal, #encrypted_extensions{} = EE, State0) ->
     case tls_handshake_1_3:do_wait_ee(EE, State0) of
         #alert{} = Alert ->
@@ -425,9 +496,12 @@ wait_ee(info, Msg, State) ->
 wait_ee(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
-
-wait_cert_cr(internal, #change_cipher_spec{}, State) ->
-    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State);
+wait_cert_cr(enter, _, State0) ->
+    State = handle_middlebox(State0),
+    {next_state, ?FUNCTION_NAME, State,[]};
+wait_cert_cr(internal = Type, #change_cipher_spec{} = Msg,
+             State) ->
+    handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State);
 wait_cert_cr(internal, #certificate_1_3{} = Certificate, State0) ->
     case tls_handshake_1_3:do_wait_cert_cr(Certificate, State0) of
         {#alert{} = Alert, State} ->
@@ -447,8 +521,11 @@ wait_cert_cr(info, Msg, State) ->
 wait_cert_cr(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
-wait_eoed(internal, #change_cipher_spec{}, State) ->
-    tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State);
+wait_eoed(enter, _, State0) ->
+    State = handle_middlebox(State0),
+    {next_state, ?FUNCTION_NAME, State,[]};
+wait_eoed(internal = Type, #change_cipher_spec{} = Msg, State) ->
+    handle_change_cipher_spec(Type, Msg, ?FUNCTION_NAME, State);
 wait_eoed(internal, #end_of_early_data{} = EOED, State0) ->
     case tls_handshake_1_3:do_wait_eoed(EOED, State0) of
         {#alert{} = Alert, State} ->
@@ -461,6 +538,8 @@ wait_eoed(info, Msg, State) ->
 wait_eoed(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
+connection(enter, _, State) ->
+    {keep_state, State};
 connection(internal, #new_session_ticket{} = NewSessionTicket, State) ->
     handle_new_session_ticket(NewSessionTicket, State),
     tls_gen_connection:next_event(?FUNCTION_NAME, no_record, State);
@@ -484,6 +563,8 @@ connection({call, From}, negotiated_protocol,
 connection(Type, Event, State) ->
     ssl_gen_statem:?FUNCTION_NAME(Type, Event, State).
 
+downgrade(enter, _, State) ->
+    {keep_state, State};
 downgrade(internal, #new_session_ticket{} = NewSessionTicket, State) ->
     _ = handle_new_session_ticket(NewSessionTicket, State),
     {next_state, ?FUNCTION_NAME, State};
@@ -550,7 +631,7 @@ initial_state(Role, Sender, Host, Port, Socket, {SSLOptions, SocketOptions, Trac
        socket_options = SocketOptions,
        ssl_options = SSLOptions,
        session = #session{is_resumable = false,
-                          session_id = ssl_session:legacy_session_id()},
+                          session_id = ssl_session:legacy_session_id(SSLOptions)},
        connection_states = ConnectionStates,
        protocol_buffers = #protocol_buffers{},
        user_data_buffer = {[],0,[]},
@@ -641,3 +722,19 @@ init_max_early_data_size(client) ->
 init_max_early_data_size(server) ->
     ssl_config:get_max_early_data_size().
 
+handle_middlebox(#state{protocol_specific = PS} = State0)  ->
+    %% Always be prepared to ignore one change cipher spec
+    %% for maximum interopablility, even if middlebox mode
+    %% is not enabled.
+    State0#state{protocol_specific = PS#{change_cipher_spec => ignore}}.
+
+
+handle_change_cipher_spec(Type, Msg, StateName, #state{protocol_specific = PS0} = State) ->
+    case maps:get(change_cipher_spec, PS0) of
+        ignore ->
+            PS = PS0#{change_cipher_spec => fail},
+            tls_gen_connection:next_event(StateName, no_record,
+                                          State#state{protocol_specific = PS});
+        fail ->
+            ssl_gen_statem:handle_common_event(Type, Msg, StateName, State)
+    end.

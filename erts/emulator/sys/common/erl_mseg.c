@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2002-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2002-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1416,7 +1416,8 @@ erts_mseg_init(ErtsMsegInit_t *init)
     if (!IS_2POW(GET_PAGE_SIZE))
 	erts_exit(ERTS_ABORT_EXIT, "erts_mseg: Unexpected page_size %beu\n", GET_PAGE_SIZE);
 
-    ASSERT((MSEG_ALIGNED_SIZE % GET_PAGE_SIZE) == 0);
+    ASSERT((MSEG_ALIGNED_SIZE % GET_PAGE_SIZE) == 0
+	   || (GET_PAGE_SIZE % MSEG_ALIGNED_SIZE) == 0);
 
     for (i = 0; i < no_mseg_allocators; i++) {
 	ErtsMsegAllctr_t *ma = ERTS_MSEG_ALLCTR_IX(i);

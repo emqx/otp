@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2022. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -2466,13 +2466,14 @@ prepare_op(Tid, {op, add_table_copy, Storage, Node, TabDef}, _WaitFor) ->
 		_  ->
 		    ok
 	    end,
-            mnesia_lib:verbose("~w:~w Adding table~n",[?MODULE,?LINE]),
 
 	    case mnesia_controller:get_network_copy(Tid, Tab, Cs) of
 		{loaded, ok} ->
                     %% Tables are created by mnesia_loader get_network code
                     insert_cstruct(Tid, Cs, true),
 		    {true, optional};
+                {not_loaded, {not_active, schema, Node}} ->
+                    mnesia:abort({node_not_running, Node});
 		{not_loaded, ErrReason} ->
 		    Reason = {system_limit, Tab, {Node, ErrReason}},
 		    mnesia:abort(Reason)
@@ -3398,8 +3399,7 @@ do_merge_schema(LockTabs0) ->
 		    RemoteRunning = mnesia_lib:intersect(New ++ Old, RemoteRunning1),
 		    if
 			RemoteRunning /= RemoteRunning1 ->
-			    mnesia_lib:error("Mnesia on ~p could not connect to node(s) ~p~n",
-					     [node(), RemoteRunning1 -- RemoteRunning]),
+                            warn_user_connect_failed(RemoteRunning1 -- RemoteRunning),
 			    mnesia:abort({node_not_running, RemoteRunning1 -- RemoteRunning});
 			true -> ok
 		    end,
@@ -3439,6 +3439,22 @@ do_merge_schema(LockTabs0) ->
 	    %% No more nodes to merge schema with
 	    not_merged
     end.
+
+warn_user_connect_failed(Missing) ->
+    Tag = {user_warned, do_schema_merge},
+    case ?catch_val(Tag) of
+        {'EXIT', _} ->
+            mnesia_lib:error("Mnesia on ~p could not connect to node(s) ~p~n",
+                             [node(), Missing]),
+            mnesia_lib:set(Tag, 1);
+        N when N rem 2000 =:= 0 ->  %% ~10 min
+            mnesia_lib:error("Mnesia on ~p could not connect to node(s) ~p~n",
+                             [node(), Missing]),
+            mnesia_lib:set(Tag, N+1);
+        N ->
+            mnesia_lib:set(Tag, N+1)
+    end.
+
 
 fetch_cstructs(Node) ->
     rpc:call(Node, mnesia_controller, get_remote_cstructs, []).

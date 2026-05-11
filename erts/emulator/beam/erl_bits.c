@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1999-2021. All Rights Reserved.
+ * Copyright Ericsson AB 1999-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -781,7 +781,7 @@ fmt_int(byte *buf, Uint sz, Eterm val, Uint size, Uint flags)
 }
 
 static void
-ERTS_INLINE need_byte_buf(ERL_BITS_PROTO_1(int need))
+ERTS_INLINE need_byte_buf(ERL_BITS_PROTO_1(Uint need))
 {
     if (byte_buf_len < need) {
 	erts_atomic_add_nob(&bits_bufs_size, need - byte_buf_len);

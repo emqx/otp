@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,13 +72,13 @@ erts_mtx_t erts_dirty_bp_ix_mtx;
 static ERTS_INLINE ErtsMonotonicTime
 get_mtime(Process *c_p)
 {
-    return erts_get_monotonic_time(erts_proc_sched_data(c_p));
+    return erts_get_monotonic_time(NULL);
 }
 
 static ERTS_INLINE Uint32
 acquire_bp_sched_ix(Process *c_p)
 {
-    ErtsSchedulerData *esdp = erts_proc_sched_data(c_p);
+    ErtsSchedulerData *esdp = erts_get_scheduler_data();
     ASSERT(esdp);
     if (ERTS_SCHEDULER_IS_DIRTY(esdp)) {
 	erts_mtx_lock(&erts_dirty_bp_ix_mtx);

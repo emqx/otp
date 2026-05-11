@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2014-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2014-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -591,14 +591,15 @@ erts_pid_ref_delete(Eterm ref)
 	erts_rwmtx_rwlock(&tblp->rwmtx);
 
 	tep = hash_remove(&tblp->hash, &tmpl);
-	ASSERT(tep);
 
 	erts_rwmtx_rwunlock(&tblp->rwmtx);
 
-	if (tblp != &pid_ref_table[0].u.table)
-	    erts_free(ERTS_ALC_T_PREF_NSCHED_ENT, (void *) tep);
-	else
-	    erts_free(ERTS_ALC_T_PREF_ENT, (void *) tep);
+        if (tep) {
+            if (tblp != &pid_ref_table[0].u.table)
+                erts_free(ERTS_ALC_T_PREF_NSCHED_ENT, (void *) tep);
+            else
+                erts_free(ERTS_ALC_T_PREF_ENT, (void *) tep);
+        }
     }
 }
 
@@ -700,6 +701,27 @@ init_pid_ref_tables(void)
         ERTS_LOCK_FLAGS_PROPERTY_STATIC | ERTS_LOCK_FLAGS_CATEGORY_GENERIC);
     }
 }
+
+
+Uint
+erts_pid_ref_table_size(void)
+{
+    int i;
+    Uint sz = 0;
+
+    for (i = 0; i <= erts_no_schedulers; i++) {
+        HashInfo hi;
+	ErtsPidRefTable *tblp = &pid_ref_table[i].u.table;
+        erts_rwmtx_rlock(&tblp->rwmtx);
+        hash_get_info(&hi, &tblp->hash);
+        erts_rwmtx_runlock(&tblp->rwmtx);
+        sz += (Uint) hi.objs;
+    }
+
+    return sz;
+}
+
+
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *\
  * Unique Integer                                                    *

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2017-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2017-2022. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -112,6 +112,15 @@ err:
     fprintf(stderr, "Setup RSA_METHOD failed\r\n");
     return 0;
 #endif
+}
+
+static int test_finish(ENGINE *e) {
+    printf("OTP Test Engine Finish!\r\n");
+
+    //    EVP_cleanup();
+
+    return 111;
+
 }
 
 static void add_test_data(unsigned char *md, unsigned int len)
@@ -266,6 +275,8 @@ static int bind_helper(ENGINE * e, const char *id)
     if (!ENGINE_set_name(e, test_engine_name))
         goto err;
     if (!ENGINE_set_init_function(e, test_init))
+        goto err;
+    if (!ENGINE_set_finish_function(e, test_finish))
         goto err;
     if (!ENGINE_set_digests(e, &test_engine_digest_selector))
         goto err;

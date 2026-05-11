@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1065,7 +1065,7 @@ save2(DbgInfo) ->
     Key = {'$$$_report', current_pos},
     P =
 	case ?ets_lookup_element(mnesia_gvar, Key, 2) of
-	    30 -> -1;
+            100 -> -1;
 	    I -> I
 	end,
     set({'$$$_report', current_pos}, P+1),

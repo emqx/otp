@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -2186,8 +2186,8 @@ start_client(openssl, Port, ClientOpts, Config) ->
     SessionArgs =  proplists:get_value(session_args, ClientOpts, []),
     HostName = proplists:get_value(hostname, ClientOpts, net_adm:localhost()),
     SNI = openssl_sni(proplists:get_value(server_name_indication, ClientOpts, undefined)),
-    OCSPStatus = openssl_ocsp_status(proplists:get_value(ocsp_stapling, ClientOpts, undefined)),
     Debug = openssl_debug_options(DOpenssl),
+    OCSPStatus = openssl_ocsp_status(proplists:get_value(ocsp_stapling, ClientOpts, undefined)),
 
     Exe = "openssl",
     Args0 =  case Groups0 of
@@ -2375,6 +2375,7 @@ openssl_debug_options(true) ->
     ["-msg", "-debug"];
 openssl_debug_options(false) ->
     [].
+
 %%
 openssl_debug_options(PrivDir, true) ->
     case is_keylogfile_supported() of
@@ -3980,6 +3981,8 @@ openssl_maxfraglen_support() ->
             false;
 	"OpenSSL 1.1.1" ++ _ ->
             true;
+        "OpenSSL 3.0" ++ _ ->
+            false; %% OpenSSL sends internal error alert
         "OpenSSL" ++ _ ->
             true;
         _  ->

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -390,6 +390,9 @@ list_to_utf8_atom(Config) when is_list(Config) ->
     _ = atom_roundtrip([16#1000]),
     _ = atom_roundtrip([16#10FFFF]),
     atom_badarg([16#110000]),
+
+    atom_badarg([-1]),
+    [atom_badarg([(-1 bsl N) + $A]) || N <- lists:seq(8,16)],
     ok.
 
 atom_roundtrip(String) ->

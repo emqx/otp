@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2022. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -366,6 +366,7 @@ demonitor(Process *c_p, Eterm ref, Eterm *multip)
                                                    NIL,
                                                    THE_NON_VALUE);
        amdp->origin.flags = mon->flags & ERTS_ML_STATE_ALIAS_MASK;
+       mon->flags &= ~ERTS_ML_STATE_ALIAS_MASK;
        erts_monitor_tree_replace(&ERTS_P_MONITORS(c_p), mon, &amdp->origin);
        break;
    }
@@ -394,6 +395,14 @@ demonitor(Process *c_p, Eterm ref, Eterm *multip)
        return am_true;
    }
 
+   case ERTS_MON_TYPE_DIST_PORT: {
+       ASSERT(is_external_port(mon->other.item));
+       ASSERT(external_pid_dist_entry(mon->other.item)
+              == erts_this_dist_entry);
+       erts_monitor_release(mon);
+       return am_true;
+   }
+
    case ERTS_MON_TYPE_PROC:
        erts_proc_sig_send_demonitor(mon);
        return am_true;
@@ -419,14 +428,12 @@ demonitor(Process *c_p, Eterm ref, Eterm *multip)
 
        if (is_external_pid(to))
            dep = external_pid_dist_entry(to);
-       else {
-           /* Monitoring a name at node to */
+       else /* Monitoring a name at node to */
            dep = erts_sysname_to_connected_dist_entry(to);
-           ASSERT(dep != erts_this_dist_entry);
-           if (!dep) {
-               erts_monitor_release(mon);
-               return am_false;
-           }
+
+       if (!dep || dep == erts_this_dist_entry) {
+           erts_monitor_release(mon);
+           return am_false;
        }
 
        code = erts_dsig_prepare(&ctx, dep, c_p, ERTS_PROC_LOCK_MAIN,
@@ -559,43 +566,6 @@ badarg:
     BIF_ERROR(BIF_P, BADARG);
 }
 
-/* Type must be atomic object! */
-void
-erts_queue_monitor_message(Process *p,
-			   ErtsProcLocks *p_locksp,
-			   Eterm ref,
-			   Eterm type,
-			   Eterm item,
-			   Eterm reason)
-{
-    Eterm tup;
-    Eterm* hp;
-    Eterm reason_copy, ref_copy, item_copy;
-    Uint reason_size, ref_size, item_size, heap_size;
-    ErlOffHeap *ohp;
-    ErtsMessage *msgp;
-
-    reason_size = IS_CONST(reason) ? 0 : size_object(reason);
-    item_size   = IS_CONST(item) ? 0 : size_object(item);
-    ref_size    = size_object(ref);
-
-    heap_size = 6+reason_size+ref_size+item_size;
-
-    msgp = erts_alloc_message_heap(p, p_locksp, heap_size,
-				   &hp, &ohp);
-
-    reason_copy = (IS_CONST(reason)
-		   ? reason
-		   : copy_struct(reason, reason_size, &hp, ohp));
-    item_copy   = (IS_CONST(item)
-		   ? item
-		   : copy_struct(item, item_size, &hp, ohp));
-    ref_copy    = copy_struct(ref, ref_size, &hp, ohp);
-
-    tup = TUPLE5(hp, am_DOWN, ref_copy, type, item_copy, reason_copy);
-    erts_queue_message(p, *p_locksp, msgp, tup, am_system);
-}
-
 Uint16
 erts_monitor_opts(Eterm opts, Eterm *tag)
 {
@@ -649,7 +619,6 @@ erts_monitor_opts(Eterm opts, Eterm *tag)
 static BIF_RETTYPE monitor(Process *c_p, Eterm type, Eterm target,
                            Uint16 add_oflags, Eterm tag) 
 {
-    Eterm tmp_heap[3];
     Eterm ref, id, name;
     ErtsMonitorData *mdp;
     BIF_RETTYPE ret_val;
@@ -677,9 +646,11 @@ static BIF_RETTYPE monitor(Process *c_p, Eterm type, Eterm target,
                 mdp->origin.flags |= add_oflags;
                 erts_monitor_tree_insert(&ERTS_P_MONITORS(c_p),
                                          &mdp->origin);
-                if (!erts_proc_sig_send_monitor(&mdp->u.target, id))
+                if (is_not_internal_pid(id)
+                    || !erts_proc_sig_send_monitor(&mdp->u.target, id)) {
                     erts_proc_sig_send_monitor_down(&mdp->u.target,
                                                     am_noproc);
+                }
             }
 
             goto done;
@@ -689,11 +660,7 @@ static BIF_RETTYPE monitor(Process *c_p, Eterm type, Eterm target,
         local_named_process:
             name = target;
             id = erts_whereis_name_to_id(c_p, target);
-            if (is_internal_pid(id))
-                goto local_process;
-            target = TUPLE2(&tmp_heap[0], name,
-                            erts_this_dist_entry->sysname);
-            goto noproc;
+            goto local_process;
         }
 
         if (is_external_pid(target)) {
@@ -701,8 +668,15 @@ static BIF_RETTYPE monitor(Process *c_p, Eterm type, Eterm target,
             int code;
 
             dep = external_pid_dist_entry(target);
-            if (dep == erts_this_dist_entry)
-                goto noproc;
+            if (dep == erts_this_dist_entry) {
+                mdp = erts_monitor_create(ERTS_MON_TYPE_DIST_PROC, ref,
+                                          c_p->common.id, target,
+                                          NIL, tag);
+                mdp->origin.flags |= add_oflags;
+                erts_monitor_tree_insert(&ERTS_P_MONITORS(c_p), &mdp->origin);
+                erts_proc_sig_send_monitor_down(&mdp->u.target, am_noproc);
+                goto done;
+            }
 
             id = target;
             name = NIL;
@@ -795,16 +769,19 @@ static BIF_RETTYPE monitor(Process *c_p, Eterm type, Eterm target,
         local_named_port:
             name = target;
             id = erts_whereis_name_to_id(c_p, target);
-            if (is_internal_port(id))
-                goto local_port;
-            target = TUPLE2(&tmp_heap[0], name,
-                            erts_this_dist_entry->sysname);
-            goto noproc;
+            goto local_port;
         }
 
         if (is_external_port(target)) {
-            if (erts_this_dist_entry == external_port_dist_entry(target))
-                goto noproc;
+            if (erts_this_dist_entry == external_port_dist_entry(target)) {
+                mdp = erts_monitor_create(ERTS_MON_TYPE_DIST_PORT, ref,
+                                          c_p->common.id, target,
+                                          NIL, tag);
+                mdp->origin.flags |= add_oflags;
+                erts_monitor_tree_insert(&ERTS_P_MONITORS(c_p), &mdp->origin);
+                erts_proc_sig_send_monitor_down(&mdp->u.target, am_noproc);
+                goto done;
+            }
             goto badarg;
         }
 
@@ -843,23 +820,6 @@ static BIF_RETTYPE monitor(Process *c_p, Eterm type, Eterm target,
 badarg:
 
     ERTS_BIF_PREP_ERROR(ret_val, c_p, BADARG);
-
-    if (0) {
-        ErtsProcLocks locks;
-noproc:
-        locks = ERTS_PROC_LOCK_MAIN;
-
-        erts_queue_monitor_message(c_p,
-                                   &locks,
-                                   ref,
-                                   type,
-                                   target,
-                                   am_noproc);
-        if (locks != ERTS_PROC_LOCK_MAIN)
-            erts_proc_unlock(c_p, locks & ~ERTS_PROC_LOCK_MAIN);
-
-        ERTS_BIF_PREP_RET(ret_val, ref);
-    }
     
 done:
 
@@ -3337,77 +3297,6 @@ BIF_RETTYPE integer_to_list_2(BIF_ALIST_2)
     }
 
     return res;
-}
-
-/**********************************************************************/
-
-/*
- * Converts a list of ascii base10 digits to an integer fully or partially.
- * Returns result and the remaining tail.
- * On error returns: {error,not_a_list}, or {error, no_integer}
- */
-
-BIF_RETTYPE string_list_to_integer_1(BIF_ALIST_1)
-{
-     Eterm res;
-     Eterm tail;
-     Eterm *hp;
-     /* must be a list */
-     switch (erts_list_to_integer(BIF_P, BIF_ARG_1, 10, &res, &tail)) {
-     /* HAlloc after erts_list_to_integer as it might HAlloc itself (bignum) */
-     case LTI_BAD_STRUCTURE:
-	 hp = HAlloc(BIF_P,3);
-	 BIF_RET(TUPLE2(hp, am_error, am_not_a_list));
-     case LTI_NO_INTEGER:
-	 hp = HAlloc(BIF_P,3);
-	 BIF_RET(TUPLE2(hp, am_error, am_no_integer));
-     default:
-	 hp = HAlloc(BIF_P,3);
-	 BIF_RET(TUPLE2(hp, res, tail));
-     }
-}
-
-BIF_RETTYPE list_to_integer_1(BIF_ALIST_1)
- {
-   /* Using erts_list_to_integer is about twice as fast as using
-      erts_chars_to_integer because we do not have to copy the 
-      entire list */
-     Eterm res;
-     Eterm dummy;
-     /* must be a list */
-     if (erts_list_to_integer(BIF_P, BIF_ARG_1, 10,
-                              &res, &dummy) != LTI_ALL_INTEGER) {
-	 BIF_ERROR(BIF_P,BADARG);
-     }
-     BIF_RET(res);
- }
-
-BIF_RETTYPE list_to_integer_2(BIF_ALIST_2)
-{
-  /* Bif implementation is about 50% faster than pure erlang,
-     and since we have erts_chars_to_integer now it is simpler
-     as well. This could be optmized further if we did not have to
-     copy the list to buf. */
-    Sint i;
-    Eterm res, dummy;
-    int base;
-
-    i = erts_list_length(BIF_ARG_1);
-    if (i < 0 || is_not_small(BIF_ARG_2)) {
-        BIF_ERROR(BIF_P, BADARG);
-    }
-
-    base = signed_val(BIF_ARG_2);
-
-    if (base < 2 || base > 36) {
-        BIF_ERROR(BIF_P, BADARG);
-    }
-
-    if (erts_list_to_integer(BIF_P, BIF_ARG_1, base,
-                             &res, &dummy) != LTI_ALL_INTEGER) {
-        BIF_ERROR(BIF_P,BADARG);
-    }
-    BIF_RET(res);
 }
 
 /**********************************************************************/

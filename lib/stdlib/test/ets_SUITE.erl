@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@
 -export([match1/1, match2/1, match_object/1, match_object2/1]).
 -export([dups/1, misc1/1, safe_fixtable/1, info/1, tab2list/1]).
 -export([info_binary_stress/1]).
+-export([info_whereis_busy/1]).
 -export([tab2file/1, tab2file2/1, tabfile_ext1/1,
 	 tabfile_ext2/1, tabfile_ext3/1, tabfile_ext4/1, badfile/1]).
 -export([heavy_lookup/1, heavy_lookup_element/1, heavy_concurrent/1]).
@@ -44,6 +45,8 @@
          select_bound_chunk/1, t_delete_all_objects/1, t_test_ms/1,
 	 t_select_delete/1,t_select_replace/1,t_select_replace_next_bug/1,
          t_select_pam_stack_overflow_bug/1,
+         t_select_flatmap_term_copy_bug/1,
+         t_select_hashmap_term_copy_bug/1,
          t_ets_dets/1]).
 -export([t_insert_list/1, t_insert_list_bag/1, t_insert_list_duplicate_bag/1,
          t_insert_list_set/1, t_insert_list_delete_set/1,
@@ -96,6 +99,7 @@
 -export([otp_9932/1]).
 -export([otp_9423/1]).
 -export([otp_10182/1]).
+-export([compress_magic_ref/1]).
 -export([ets_all/1]).
 -export([massive_ets_all/1]).
 -export([take/1]).
@@ -152,6 +156,8 @@ all() ->
      t_test_ms, t_select_delete, t_select_replace,
      t_select_replace_next_bug,
      t_select_pam_stack_overflow_bug,
+     t_select_flatmap_term_copy_bug,
+     t_select_hashmap_term_copy_bug,
      t_ets_dets, memory, t_select_reverse, t_bucket_disappears,
      t_named_select, select_fixtab_owner_change,
      select_fail, t_insert_new, t_repair_continuation,
@@ -168,6 +174,7 @@ all() ->
      otp_10182,
      otp_9932,
      otp_9423,
+     compress_magic_ref,
      ets_all,
      massive_ets_all,
      take,
@@ -197,7 +204,7 @@ groups() ->
      {match, [],
       [match1, match2, match_object, match_object2]},
      {misc, [],
-      [misc1, safe_fixtable, info, info_binary_stress, dups, tab2list]},
+      [misc1, safe_fixtable, info, info_binary_stress, info_whereis_busy, dups, tab2list]},
      {files, [],
       [tab2file, tab2file2, tabfile_ext1,
        tabfile_ext2, tabfile_ext3, tabfile_ext4, badfile]},
@@ -1913,6 +1920,131 @@ t_select_pam_stack_overflow_bug(Config) ->
     ets:delete(T),
     ok.
 
+%% When a variable was used as key in ms body, the matched value would
+%% not be copied to the heap of the calling process.
+t_select_flatmap_term_copy_bug(_Config) ->
+    T = ets:new(a,[]),
+    ets:insert(T, {list_to_binary(lists:duplicate(36,$a))}),
+    V1 = ets:select(T, [{{'$1'},[],[#{ '$1' => a }]}]),
+    erlang:garbage_collect(),
+    V1 = ets:select(T, [{{'$1'},[],[#{ '$1' => a }]}]),
+    erlang:garbage_collect(),
+    V2 = ets:select(T, [{{'$1'},[],[#{ a => '$1' }]}]),
+    erlang:garbage_collect(),
+    V2 = ets:select(T, [{{'$1'},[],[#{ a => '$1' }]}]),
+    erlang:garbage_collect(),
+    V3 = ets:select(T, [{{'$1'},[],[#{ '$1' => '$1' }]}]),
+    erlang:garbage_collect(),
+    V3 = ets:select(T, [{{'$1'},[],[#{ '$1' => '$1' }]}]),
+    erlang:garbage_collect(),
+    V4 = ets:select(T, [{{'$1'},[],[#{ a => a }]}]),
+    erlang:garbage_collect(),
+    V4 = ets:select(T, [{{'$1'},[],[#{ a => a }]}]),
+    erlang:garbage_collect(),
+    ets:delete(T),
+    ok.
+
+%% When a variable was used as key or value in ms body,
+%% the matched value would not be copied to the heap of
+%% the calling process.
+t_select_hashmap_term_copy_bug(_Config) ->
+
+    T = ets:new(a,[]),
+    Dollar1 = list_to_binary(lists:duplicate(36,$a)),
+    ets:insert(T, {Dollar1}),
+
+    {LargeMapSize, FlatmapSize} =
+        case erlang:system_info(emu_type) of
+            debug -> {40, 3};
+            _ -> {250, 32}
+        end,
+
+    LM = maps:from_keys(lists:seq(1,LargeMapSize), 1),
+
+    lists:foreach(
+      fun(Key) ->
+              V = ets:select(T, [{{'$1'},[], [LM#{ Key => '$1' }]}]),
+              erlang:garbage_collect(),
+              V = ets:select(T, [{{'$1'},[], [LM#{ Key => '$1' }]}]),
+              erlang:garbage_collect(),
+
+              V = [LM#{ Key => Dollar1 }]
+      end, maps:keys(LM)),
+    
+    %% Create a hashmap with enough keys before and after the '$1' for it to
+    %% remain a hashmap when we remove those keys.
+    LMWithDollar = make_lm_with_dollar(LM#{ '$1' => a }, LargeMapSize, FlatmapSize),
+
+    %% Test that hashmap with '$1' in first position works
+    %% We rely on that fact that maps:keys return the keys
+    %% in iteration order.
+    lists:foldl(
+      fun
+          (Key, M = #{ '$1' := A }) when map_size(M) > FlatmapSize ->
+
+              V = ets:select(T, [{{'$1'},[], [M]}]),
+              erlang:garbage_collect(),
+              V = ets:select(T, [{{'$1'},[], [M]}]),
+              erlang:garbage_collect(),
+
+              V = [(maps:remove('$1',M))#{ Dollar1 => A }],
+
+              maps:remove(Key, M);
+          (_, M) when map_size(M) > FlatmapSize ->
+              M
+      end, LMWithDollar, maps:keys(LMWithDollar)),
+
+    %% Test that hashmap with '$1' in last position works
+    %% We rely on that fact that maps:keys return the keys
+    %% in iteration order.
+    lists:foldl(
+      fun
+          (Key, M = #{ '$1' := A }) ->
+
+              V = ets:select(T, [{{'$1'},[], [M]}]),
+              erlang:garbage_collect(),
+              V = ets:select(T, [{{'$1'},[], [M]}]),
+              erlang:garbage_collect(),
+
+              V = [(maps:remove('$1',M))#{ Dollar1 => A }],
+
+              maps:remove(Key, M);
+          (_, M) when map_size(M) > FlatmapSize ->
+              M
+      end, LMWithDollar, lists:reverse(maps:keys(LMWithDollar))),
+    
+    %% Test hashmap with a key-value pair that are variable
+    V3 = ets:select(T, [{{'$1'},[], [LM#{ '$1' => '$1' }]}]),
+    erlang:garbage_collect(),
+    V3 = ets:select(T, [{{'$1'},[], [LM#{ '$1' => '$1' }]}]),
+    erlang:garbage_collect(),
+
+    V3 = [LM#{ Dollar1 => Dollar1 }],
+
+    %% Test hashmap with all constant keys and values
+    V4 = ets:select(T, [{{'$1'},[], [LM#{ a => a }]}]),
+    erlang:garbage_collect(),
+    V4 = ets:select(T, [{{'$1'},[], [LM#{ a => a }]}]),
+    erlang:garbage_collect(),
+
+    V4 = [LM#{ a => a }],
+
+    ets:delete(T),
+    ok.
+
+%% Create a hashmap that always has FlatmapSize keys before and after '$1'.
+%% Since the atom index of '$1' is used as hash, we cannot know before the
+%% code is run where exactly it will be placed, so in the rare cases when
+%% there isn't enough keys in the map, we insert more until there are enough.
+make_lm_with_dollar(Map, LargeMapSize, FlatmapSize) ->
+    {KeysBefore, KeysAfter} = lists:splitwith(fun erlang:is_integer/1, maps:keys(Map)),
+    if length(KeysBefore) =< FlatmapSize;
+       length(KeysAfter) - 1 =< FlatmapSize ->
+            NewMap = maps:from_keys(lists:seq(LargeMapSize, LargeMapSize*2), 1),
+            make_lm_with_dollar(maps:merge(Map, NewMap), LargeMapSize*2, FlatmapSize);
+       true ->
+            Map
+    end.
 
 %% Test that partly bound keys gives faster matches.
 partly_bound(Config) when is_list(Config) ->
@@ -5113,6 +5245,31 @@ test_table_counter_concurrency(WhatToTest, TableOptions) ->
     erts_debug:set_internal_state(available_internal_state, IntStatePrevOn),
     ok.
 
+%% ERIERL-855: Calling info or whereis on a table being busy trapping (insert)
+%% could return 'undefined'.
+info_whereis_busy(Config) when is_list(Config) ->
+    TName = info_whereis_busy,
+    TName = ets:new(TName, [named_table, public]),
+    T = ets:whereis(TName),
+    NKeys = 100_000,
+    Tuples = [{K} || K <- lists:seq(1,NKeys)],
+    _Inserter = spawn_link(fun() ->
+                                   ets:insert(TName, Tuples)
+                           end),
+    repeat_while(fun() ->
+                         Info = ets:info(TName),
+                         false = (Info =:= undefined),
+                         T = ets:whereis(TName),
+                         case lists:keyfind(size, 1, Info) of
+                             {size, NKeys} ->
+                                 false;
+                             {size, _} ->
+                                 true
+                         end
+                 end),
+    ets:delete(T),
+    ok.
+
 test_table_size_concurrency(Config) when is_list(Config) ->
     case erlang:system_info(schedulers) of
         1 -> {skip,"Only valid on smp > 1 systems"};
@@ -7279,6 +7436,28 @@ otp_10182(Config) when is_list(Config) ->
               ets:delete(Db),
               In = Out
       end).
+
+%% Verify magic refs in compressed table are reference counted correctly
+compress_magic_ref(Config) when is_list(Config)->
+    F = fun(Opts) ->
+                T = ets:new(banana, Opts),
+                ets:insert(T, {key, atomics:new(2, [])}),
+                erlang:garbage_collect(),  % make really sure no ref on heap
+                [{_, Ref}] = ets:lookup(T, key),
+                #{size := 2} = atomics:info(Ref), % Still alive!
+
+                %% Now test ets:delete will deallocate if last ref
+                WeakRef = term_to_binary(Ref),
+                erlang:garbage_collect(),  % make sure no Ref on heap
+                ets:delete(T, key),
+                StaleRef = binary_to_term(WeakRef),
+                badarg = try atomics:info(StaleRef)
+                         catch error:badarg -> badarg end,
+                ets:delete(T),
+                ok
+          end,
+    repeat_for_opts(F, [[set, ordered_set], compressed]),
+    ok.
 
 %% Test that ets:all include/exclude tables that we know are created/deleted
 ets_all(Config) when is_list(Config) ->

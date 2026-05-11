@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2020-2022. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -120,6 +120,8 @@ void BeamGlobalAssembler::emit_handle_error() {
 /* ARG3 = (HTOP + bytes needed) !!
  * ARG4 = Live registers */
 void BeamGlobalAssembler::emit_garbage_collect() {
+    Label exiting = a.newLabel();
+
     /* Convert ARG3 to words needed and move it to the correct argument slot */
     a.sub(ARG3, HTOP);
     a.shr(ARG3, imm(3));
@@ -140,7 +142,19 @@ void BeamGlobalAssembler::emit_garbage_collect() {
 
     emit_leave_runtime<Update::eStack | Update::eHeap>();
 
+#ifdef WIN32
+    a.mov(ARG1d, x86::dword_ptr(c_p, offsetof(Process, state.value)));
+#else
+    a.mov(ARG1d, x86::dword_ptr(c_p, offsetof(Process, state.counter)));
+#endif
+    a.test(ARG1d, imm(ERTS_PSFLG_EXITING));
+    a.short_().jne(exiting);
+
     a.ret();
+
+    a.bind(exiting);
+    emit_discard_cp();
+    a.jmp(labels[do_schedule]);
 }
 
 /* Handles trapping to exports from C code, setting registers up in the same

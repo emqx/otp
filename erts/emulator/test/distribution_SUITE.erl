@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2022. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,6 +29,9 @@
 -define(NEW_REFERENCE_EXT,   114).
 -define(ATOM_UTF8_EXT,       118).
 -define(SMALL_ATOM_UTF8_EXT, 119).
+
+-define(DFLAG_EXPORT_PTR_TAG, 16#200).
+-define(DFLAG_BIT_BINARIES,   16#400).
 
 %% Tests distribution and the tcp driver.
 
@@ -62,6 +65,7 @@
          bad_dist_ext_control/1,
          bad_dist_ext_connection_id/1,
          bad_dist_ext_size/1,
+         bad_dist_ext_spawn_request_arg_list/1,
 	 start_epmd_false/1, no_epmd/1, epmd_module/1,
          bad_dist_fragments/1,
          exit_dist_fragments/1,
@@ -77,7 +81,9 @@
          system_limit/1,
          hopefull_data_encoding/1,
          hopefull_export_fun_bug/1,
-         huge_iovec/1]).
+         huge_iovec/1,
+         creation_selection/1,
+         creation_selection_test/1]).
 
 %% Internal exports.
 -export([sender/3, receiver2/2, dummy_waiter/0, dead_process/0,
@@ -110,7 +116,7 @@ all() ->
      dist_entry_refc_race,
      start_epmd_false, no_epmd, epmd_module, system_limit,
      hopefull_data_encoding, hopefull_export_fun_bug,
-     huge_iovec].
+     huge_iovec, creation_selection].
 
 groups() ->
     [{bulk_send, [], [bulk_send_small, bulk_send_big, bulk_send_bigbig]},
@@ -124,7 +130,8 @@ groups() ->
      {bad_dist_ext, [],
       [bad_dist_ext_receive, bad_dist_ext_process_info,
        bad_dist_ext_size,
-       bad_dist_ext_control, bad_dist_ext_connection_id]},
+       bad_dist_ext_control, bad_dist_ext_connection_id,
+       bad_dist_ext_spawn_request_arg_list]},
      {message_latency, [],
       [message_latency_large_message,
        message_latency_large_link_exit,
@@ -1752,6 +1759,8 @@ test_system_limit(Config) when is_list(Config) ->
 -define(DOP_PAYLOAD_EXIT2_TT, 27).
 -define(DOP_PAYLOAD_MONITOR_P_EXIT, 28).
 
+-define(DOP_SPAWN_REQUEST, 29).
+
 start_monitor(Offender,P) ->
     Parent = self(),
     Q = spawn(Offender,
@@ -2322,6 +2331,53 @@ bad_dist_ext_size(Config) when is_list(Config) ->
     stop_node(Offender),
     stop_node(Victim).
 
+bad_dist_ext_spawn_request_arg_list(Config) when is_list(Config) ->
+    {ok, Offender} = start_node(bad_dist_spawn_request_arg_list_offender, "-connect_all false"),
+    {ok, Victim} = start_node(bad_dist_spawn_request_arg_list_victim, "-connect_all false"),
+    Parent = self(),
+    start_node_monitors([Offender,Victim]),
+    SuccessfulSpawn = make_ref(),
+    BrokenSpawn = make_ref(),
+    P = spawn_link(
+          Offender,
+          fun () ->
+                  ReqId1 = make_ref(),
+                  dctrl_dop_spawn_request(Victim, ReqId1, self(), group_leader(),
+                                          {erlang, send, 2}, [],
+                                          dmsg_ext([self(), SuccessfulSpawn])),
+                  receive SuccessfulSpawn -> Parent ! SuccessfulSpawn end,
+                  receive BrokenSpawn -> ok end,
+                  ReqId2 = make_ref(),
+                  dctrl_dop_spawn_request(Victim, ReqId2, self(), group_leader(),
+                                          {erlang, send, 2}, [],
+                                          dmsg_bad_atom_cache_ref()),
+                  Parent ! BrokenSpawn,
+                  receive after infinity -> ok end
+          end),
+    receive SuccessfulSpawn -> ok end,
+    verify_up(Offender, Victim),
+    P ! BrokenSpawn,
+    receive BrokenSpawn -> ok end,
+    verify_down(Offender, connection_closed, Victim, killed),
+    [] = erpc:call(
+           Victim,
+           fun () ->
+                   lists:filter(
+                     fun (Proc) ->
+                             case process_info(Proc, current_function) of
+                                 {current_function,
+                                  {erts_internal, dist_spawn_init, 1}} ->
+                                     true;
+                                 _ ->
+                                     false
+                             end
+                     end,
+                     processes())
+           end),
+    unlink(P),
+    stop_node(Offender),
+    stop_node(Victim),
+    ok.
 
 bad_dist_struct_check_msgs([]) ->
     receive
@@ -2384,6 +2440,15 @@ dctrl_dop_send(To, Msg) ->
                [dmsg_hdr(),
                 dmsg_ext({?DOP_SEND, ?COOKIE, To}),
                 dmsg_ext(Msg)]).
+
+dctrl_dop_spawn_request(Node, ReqId, From, GL, MFA, OptList, ArgListExt) ->
+    %% {29, ReqId, From, GroupLeader, {Module, Function, Arity}, OptList}
+    %%
+    %% Followed by ArgList.
+    dctrl_send(ensure_dctrl(Node),
+               [dmsg_hdr(),
+                dmsg_ext({?DOP_SPAWN_REQUEST, ReqId, From, GL, MFA, OptList}),
+                ArgListExt]).
 
 send_bad_structure(Offender,Victim,Bad,WhereToPutSelf) ->
     send_bad_structure(Offender,Victim,Bad,WhereToPutSelf,[]).
@@ -2800,33 +2865,41 @@ address_please(_Name, "dummy", inet6) ->
     {ok, {0,0,0,0,0,0,0,1}}.
 
 hopefull_data_encoding(Config) when is_list(Config) ->
+
+    FallbackCombos = [A bor B || A <- [0, ?DFLAG_EXPORT_PTR_TAG],
+                                 B <- [0, ?DFLAG_BIT_BINARIES]],
+
+    [hopefull_data_encoding_do(FB) || FB <- FallbackCombos],
+    ok.
+
+
+hopefull_data_encoding_do(Fallback) ->
+    io:format("Fallback = 16#~.16B\n", [Fallback]),
+
     MkHopefullData = fun(Ref,Pid) -> mk_hopefull_data(Ref,Pid) end,
-    test_hopefull_data_encoding(Config, true, MkHopefullData),
-    test_hopefull_data_encoding(Config, false, MkHopefullData),
+    test_hopefull_data_encoding(Fallback, MkHopefullData),
 
     %% Test funs with hopefully encoded term in environment
     MkBitstringInFunEnv = fun(_,_) -> [mk_fun_with_env(<<5:7>>)] end,
-    test_hopefull_data_encoding(Config, true, MkBitstringInFunEnv),
-    test_hopefull_data_encoding(Config, false, MkBitstringInFunEnv),
+    test_hopefull_data_encoding(Fallback, MkBitstringInFunEnv),
     MkExpFunInFunEnv = fun(_,_) -> [mk_fun_with_env(fun a:a/0)] end,
-    test_hopefull_data_encoding(Config, true, MkExpFunInFunEnv),
-    test_hopefull_data_encoding(Config, false, MkExpFunInFunEnv),
+    test_hopefull_data_encoding(Fallback, MkExpFunInFunEnv),
     ok.
 
 mk_fun_with_env(Term) ->
     fun() -> Term end.
 
-test_hopefull_data_encoding(Config, Fallback, MkDataFun) when is_list(Config) ->
+test_hopefull_data_encoding(Fallback, MkDataFun) ->
     {ok, ProxyNode} = start_node(hopefull_data_normal),
     {ok, BouncerNode} = start_node(hopefull_data_bouncer, "-hidden"),
     case Fallback of
-        false ->
+        0 ->
             ok;
-        true ->
+        _ ->
             rpc:call(BouncerNode, erts_debug, set_internal_state,
                      [available_internal_state, true]),
-            false = rpc:call(BouncerNode, erts_debug, set_internal_state,
-                            [remove_hopefull_dflags, true])
+            ok = rpc:call(BouncerNode, erts_debug, set_internal_state,
+                          [remove_hopefull_dflags, Fallback])
     end,
     Tester = self(),
     R1 = make_ref(),
@@ -2858,19 +2931,19 @@ test_hopefull_data_encoding(Config, Fallback, MkDataFun) when is_list(Config) ->
     receive
         [R2, HData2] ->
             case Fallback of
-                false ->
+                0 ->
                     HData = HData2;
-                true ->
-                    check_hopefull_fallback_data(HData, HData2)
+                _ ->
+                    check_hopefull_fallback_data(HData, HData2, Fallback)
             end
     end,
     receive
         [R3, HData3] ->
             case Fallback of
-                false ->
+                0 ->
                     HData = HData3;
-                true ->
-                    check_hopefull_fallback_data(HData, HData3)
+                _ ->
+                    check_hopefull_fallback_data(HData, HData3, Fallback)
             end
     end,
     unlink(Proxy),
@@ -2937,17 +3010,18 @@ mk_hopefull_data(BS) ->
                          [NewBs]
                  end, lists:seq(BSsz-32, BSsz-17))]).
 
-check_hopefull_fallback_data([], []) ->
+check_hopefull_fallback_data([], [], _) ->
     ok;
-check_hopefull_fallback_data([X|Xs],[Y|Ys]) ->
-    chk_hopefull_fallback(X, Y),
-    check_hopefull_fallback_data(Xs,Ys).
+check_hopefull_fallback_data([X|Xs],[Y|Ys], FB) ->
+    chk_hopefull_fallback(X, Y, FB),
+    check_hopefull_fallback_data(Xs, Ys, FB).
 
-chk_hopefull_fallback(Binary, FallbackBinary) when is_binary(Binary) ->
+chk_hopefull_fallback(Binary, FallbackBinary, _) when is_binary(Binary) ->
     Binary = FallbackBinary;
-chk_hopefull_fallback([BitStr], [{Bin, BitSize}]) when is_bitstring(BitStr) ->
-    chk_hopefull_fallback(BitStr, {Bin, BitSize});
-chk_hopefull_fallback(BitStr, {Bin, BitSize}) when is_bitstring(BitStr) ->
+chk_hopefull_fallback([BitStr], [{Bin, BitSize}], FB) when is_bitstring(BitStr) ->
+    chk_hopefull_fallback(BitStr, {Bin, BitSize}, FB);
+chk_hopefull_fallback(BitStr, {Bin, BitSize}, FB) when is_bitstring(BitStr) ->
+    true = ((FB band ?DFLAG_BIT_BINARIES) =/= 0),
     true = is_binary(Bin),
     true = is_integer(BitSize),
     true = BitSize > 0,
@@ -2958,20 +3032,22 @@ chk_hopefull_fallback(BitStr, {Bin, BitSize}) when is_bitstring(BitStr) ->
     FallbackBitStr = list_to_bitstring([Head,<<IBits:BitSize>>]),
     BitStr = FallbackBitStr,
     ok;
-chk_hopefull_fallback(Func, {ModName, FuncName}) when is_function(Func) ->
+chk_hopefull_fallback(Func, {ModName, FuncName}, FB) when is_function(Func) ->
+    true = ((FB band ?DFLAG_EXPORT_PTR_TAG) =/= 0),
     {M, F, _} = erlang:fun_info_mfa(Func),
     M = ModName,
     F = FuncName,
     ok;
-chk_hopefull_fallback(Fun1, Fun2) when is_function(Fun1), is_function(Fun2) ->
+chk_hopefull_fallback(Fun1, Fun2, FB) when is_function(Fun1), is_function(Fun2) ->
+    %% Recursive diff of funs with their environments
     FI1 = erlang:fun_info(Fun1),
     FI2 = erlang:fun_info(Fun2),
     {env, E1} = lists:keyfind(env, 1, FI1),
     {env, E2} = lists:keyfind(env, 1, FI1),
-    chk_hopefull_fallback(E1, E2),
+    chk_hopefull_fallback(E1, E2, FB),
     assert_same(lists:keydelete(env, 1, FI1),
                 lists:keydelete(env, 1, FI2));
-chk_hopefull_fallback(A, B) ->
+chk_hopefull_fallback(A, B, _) ->
     ok = assert_same(A,B).
 
 assert_same(A,A) -> ok.
@@ -3026,6 +3102,120 @@ mk_rand_bin(0, Data) ->
 mk_rand_bin(N, Data) ->
     mk_rand_bin(N-1, [rand:uniform(256) - 1 | Data]).
 
+creation_selection(Config) when is_list(Config) ->
+    register(creation_selection_test_supervisor, self()),
+    Name = atom_to_list(?FUNCTION_NAME) ++ "-"
+        ++ integer_to_list(erlang:system_time()),
+    Host = hostname(),
+    Cmd = lists:append(
+            [ct:get_progname(),
+             " -noshell",
+             " -setcookie ", atom_to_list(erlang:get_cookie()),
+             " -pa ", filename:dirname(code:which(?MODULE)),
+             " -s ", atom_to_list(?MODULE), " ",
+             " creation_selection_test ", atom_to_list(node()), " ",
+             atom_to_list(net_kernel:longnames()), " ", Name, " ", Host]),
+    ct:pal("Node command: ~p~n", [Cmd]),
+    Port = open_port({spawn, Cmd}, [exit_status]),
+    Node = list_to_atom(lists:append([Name, "@", Host])),
+    ok = receive_creation_selection_info(Port, Node).
+
+receive_creation_selection_info(Port, Node) ->
+    receive
+        {creation_selection_test, Node, Creations, InvalidCreation,
+         ClashResolvedCreation} = Msg ->
+            ct:log("Test result: ~p~n", [Msg]),
+            %% Verify that creation values are created as expected. The
+            %% list of creations is in reverse start order...
+            MaxC = (1 bsl 32) - 1,
+            MinC = 4,
+            StartOrderCreations = lists:reverse(Creations),
+            InvalidCreation = lists:foldl(fun (C, C) when is_integer(C),
+                                                          MinC =< C,
+                                                          C =< MaxC ->
+                                                  %% Return next expected
+                                                  %% creation...
+                                                  if C == MaxC -> MinC;
+                                                     true -> C+1
+                                                  end
+                                          end,
+                                          hd(StartOrderCreations),
+                                          StartOrderCreations),
+            false = lists:member(ClashResolvedCreation, [InvalidCreation
+                                                        | Creations]),
+            receive
+                {Port, {exit_status, 0}} ->
+                    Port ! {self(), close},
+                    ok;
+                {Port, {exit_status, EStat}} ->
+                    ct:fail({"node exited abnormally: ", EStat})
+            end;
+        {Port, {exit_status, EStat}} ->
+            ct:fail({"node prematurely exited: ", EStat});
+        {Port, {data, Data}} ->
+            ct:log("~ts", [Data]),
+            receive_creation_selection_info(Port, Node)
+    end,
+    ok.
+
+creation_selection_test([TestSupNode, LongNames, Name, Host]) ->
+    try
+        StartArgs = [Name,
+                     case LongNames of
+                         true -> longnames;
+                         false -> shortnames
+                     end],
+        Node = list_to_atom(lists:append([atom_to_list(Name),
+                                          "@", atom_to_list(Host)])),
+        GoDistributed = fun (F) ->
+                                {ok, _} = net_kernel:start(StartArgs),
+                                Node = node(),
+                                Creation = erlang:system_info(creation),
+                                _ = F(Creation),
+                                net_kernel:stop(),
+                                Creation
+                        end,
+        %% We start multiple times to verify that the creation values
+        %% we get from epmd are delivered in sequence. This is a
+        %% must for the test case such as it is written now, but can be
+        %% changed. If changed, this test case must be updated...
+        {Creations,
+         LastCreation} = lists:foldl(fun (_, {Cs, _LC}) ->
+                                             CFun = fun (X) -> X end,
+                                             C = GoDistributed(CFun),
+                                             {[C|Cs], C}
+                                     end, {[], 0}, lists:seq(1, 5)),
+        %% We create a pid with the creation that epmd will offer us the next
+        %% time we start the distribution and then start the distribution
+        %% once more. The node should avoid this creation, since this would
+        %% cause external identifiers in the system with same
+        %% nodename/creation pair as used by the local node, which in turn
+        %% would cause these identifers not to work as expected. That is, the
+        %% node should silently reject this creation and chose another one when
+        %% starting the distribution.
+        InvalidCreation = LastCreation+1,
+        Pid = erts_test_utils:mk_ext_pid({Node, InvalidCreation}, 4711, 0),
+        true = erts_debug:size(Pid) > 0, %% External pid
+        ResultFun = fun (ClashResolvedCreation) ->
+                            pong = net_adm:ping(TestSupNode),
+                            Msg = {creation_selection_test, node(), Creations,
+                                   InvalidCreation, ClashResolvedCreation},
+                            {creation_selection_test_supervisor, TestSupNode}
+                                ! Msg,
+                            %% Wait a bit so the message have time to get
+                            %% through before we take down the distribution...
+                            receive after 500 -> ok end
+                    end,
+        _ = GoDistributed(ResultFun),
+        %% Ensure Pid is not garbage collected before starting the
+        %% distribution...
+        _ = id(Pid),
+        erlang:halt(0)
+    catch
+        Class:Reason:StackTrace ->
+            erlang:display({Class, Reason, StackTrace}),
+            erlang:halt(17)
+    end.
 
 %% Try provoke DistEntry refc bugs (OTP-17513).
 dist_entry_refc_race(_Config) ->
@@ -3070,6 +3260,9 @@ derr_sender(Main, Nodes) ->
 
 
 %%% Utilities
+
+id(X) ->
+    X.
 
 timestamp() ->
     erlang:monotonic_time(millisecond).

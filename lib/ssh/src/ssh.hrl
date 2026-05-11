@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -439,6 +439,8 @@
           send_ext_info, %% May send ext-info to peer
           recv_ext_info, %% Expect ext-info from peer
 
+          kex_strict_negotiated = false,
+
 	  algorithms,   %% #alg{}
 	  
 	  send_mac = none, %% send MAC algorithm
@@ -510,7 +512,8 @@
 	  c_lng,
 	  s_lng,
           send_ext_info,
-          recv_ext_info
+          recv_ext_info,
+          kex_strict_negotiated = false
 	 }).
 
 -record(ssh_pty, {c_version = "", % client version string, e.g "SSH-2.0-Erlang/4.10.5"

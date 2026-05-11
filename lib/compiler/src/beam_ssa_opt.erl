@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1077,13 +1077,15 @@ cse_suitable(#b_set{}) -> false.
 -record(fs,
         {regs=#{} :: #{beam_ssa:b_var():=beam_ssa:b_var()},
          non_guards :: gb_sets:set(beam_ssa:label()),
-         bs :: beam_ssa:block_map()
+         bs :: beam_ssa:block_map(),
+         preds :: #{beam_ssa:label() => [beam_ssa:label()]}
         }).
 
 ssa_opt_float({#opt_st{ssa=Linear0,cnt=Count0}=St, FuncDb}) ->
     NonGuards = non_guards(Linear0),
     Blocks = maps:from_list(Linear0),
-    Fs = #fs{non_guards=NonGuards,bs=Blocks},
+    Preds = beam_ssa:predecessors(Blocks),
+    Fs = #fs{non_guards=NonGuards,bs=Blocks,preds=Preds},
     {Linear,Count} = float_opt(Linear0, Count0, Fs),
     {St#opt_st{ssa=Linear,cnt=Count}, FuncDb}.
 
@@ -1207,9 +1209,15 @@ float_maybe_flush(Blk0, Fs0, Count0) ->
             {FlushBs,Blk,Fs,Count}
     end.
 
-float_safe_to_skip_flush(L, #fs{bs=Blocks}=Fs) ->
+float_safe_to_skip_flush(L, #fs{bs=Blocks,preds=Preds}=Fs) ->
     #b_blk{is=Is} = Blk = map_get(L, Blocks),
-    float_can_optimize_blk(Blk, Fs) andalso float_optimizable_is(Is).
+    case Preds of
+        #{L := [_]} ->
+            float_can_optimize_blk(Blk, Fs) andalso float_optimizable_is(Is);
+        #{} ->
+            %% This block can be reached from more than one block; must flush.
+            false
+    end.
 
 float_optimizable_is([#b_set{anno=#{float_op:=_}}|_]) ->
     true;
@@ -1380,10 +1388,6 @@ live_opt_is([#b_set{op={succeeded,guard},dst=SuccDst,args=[Dst]}=SuccI,
                     live_opt_is([I|Is], Live0, Acc);
                 {bif,tuple_size} ->
                     I = I0#b_set{op={bif,is_tuple},dst=SuccDst},
-                    live_opt_is([I|Is], Live0, Acc);
-                bs_start_match ->
-                    [#b_literal{val=new},Bin] = I0#b_set.args,
-                    I = I0#b_set{op={bif,is_bitstring},args=[Bin],dst=SuccDst},
                     live_opt_is([I|Is], Live0, Acc);
                 get_map_element ->
                     I = I0#b_set{op=has_map_field,dst=SuccDst},

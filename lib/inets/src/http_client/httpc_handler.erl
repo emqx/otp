@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2002-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -305,8 +305,9 @@ terminate(normal,
 %% Socket closed remotely
 terminate(normal, 
           #state{session = #session{socket      = {remote_close, Socket},
-                                    socket_type = SocketType, 
-                                    id          = Id}, 
+                                    socket_type = SocketType,
+                                    type        = Type,
+                                    id          = Id},
                  profile_name = ProfileName,
                  request      = Request,
                  timers       = Timers,
@@ -315,21 +316,26 @@ terminate(normal,
     %% Clobber session
     (catch httpc_manager:delete_session(Id, ProfileName)),
 
-    maybe_retry_queue(Pipeline, State),
-    maybe_retry_queue(KeepAlive, State),
+    case Type of
+        pipeline ->
+            maybe_retry_queue(Pipeline, State);
+        _ ->
+            maybe_retry_queue(KeepAlive, State)
+    end,
 
     %% Cancel timers
     cancel_timers(Timers),
 
     %% Maybe deliver answers to requests
-    deliver_answer(Request),
+    maybe_deliver_answer(Request, State),
 
     %% And, just in case, close our side (**really** overkill)
     http_transport:close(SocketType, Socket);
 
 terminate(_Reason, #state{session = #session{id          = Id,
-                                            socket      = Socket, 
-                                            socket_type = SocketType},
+                                             socket      = Socket,
+                                             type        = Type,
+                                             socket_type = SocketType},
                     request      = undefined,
                     profile_name = ProfileName,
                     timers       = Timers,
@@ -339,8 +345,12 @@ terminate(_Reason, #state{session = #session{id          = Id,
     %% Clobber session
     (catch httpc_manager:delete_session(Id, ProfileName)),
 
-    maybe_retry_queue(Pipeline, State),
-    maybe_retry_queue(KeepAlive, State),
+    case Type of
+        pipeline ->
+            maybe_retry_queue(Pipeline, State);
+        _ ->
+            maybe_retry_queue(KeepAlive, State)
+    end,
 
     cancel_timer(Timers#timers.queue_timer, timeout_queue),
     http_transport:close(SocketType, Socket);
@@ -713,24 +723,26 @@ call(Msg, Pid) ->
 cast(Msg, Pid) ->
     gen_server:cast(Pid, Msg).
 
-maybe_retry_queue(Q, State) ->
-    case queue:is_empty(Q) of 
-        false ->
+maybe_retry_queue(Q, #state{status = new} = State) ->
+    retry_pipeline(queue:to_list(Q), State);
+maybe_retry_queue(Q, #state{request = Request} = State) ->
+    case Request of
+        undefined ->
             retry_pipeline(queue:to_list(Q), State);
-        true ->
-            ok
+        _ ->
+            retry_pipeline(queue:to_list(queue:cons(Request, Q)), State)
     end.
-    
+
 maybe_send_answer(#request{from = answer_sent}, _Reason, State) ->
     State;
 maybe_send_answer(Request, Answer, State) ->
     answer_request(Request, Answer, State).
 
-deliver_answer(#request{from = From} = Request) 
+maybe_deliver_answer(#request{from = From} = Request, #state{status = new})
   when From =/= answer_sent ->
     Response = httpc_response:error(Request, socket_closed_remotely),
     httpc_response:send(From, Response);
-deliver_answer(_Request) ->
+maybe_deliver_answer(_,_) ->
     ok.
 
 %%%--------------------------------------------------------------------

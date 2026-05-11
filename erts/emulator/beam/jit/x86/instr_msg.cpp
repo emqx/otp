@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2020-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,12 +75,12 @@ void BeamModuleAssembler::emit_i_recv_set() {
 #endif /* ERTS_SUPPORT_OLD_RECV_MARK_INSTRS */
 
 void BeamModuleAssembler::emit_recv_marker_reserve(const ArgVal &Dst) {
-    emit_enter_runtime();
+    emit_enter_runtime<Update::eStack | Update::eHeap>();
 
     a.mov(ARG1, c_p);
     runtime_call<1>(erts_msgq_recv_marker_insert);
 
-    emit_leave_runtime();
+    emit_leave_runtime<Update::eStack | Update::eHeap>();
 
     mov_arg(Dst, RET);
 }

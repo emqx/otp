@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -62,11 +62,13 @@
 #define DIST_FRAG_HEADER  'E'
 #define DIST_FRAG_CONT    'F'
 #define HOPEFUL_DATA      'H'
+#define HOPEFUL_END_OF_FUN 'Q'
 #define ATOM_CACHE_REF    'R'
 #define ATOM_INTERNAL_REF2 'I'
 #define ATOM_INTERNAL_REF3 'K'
 #define BINARY_INTERNAL_REF 'J'
 #define BIT_BINARY_INTERNAL_REF 'L'
+#define MAGIC_REF_INTERNAL_REF 'N'
 #define COMPRESSED        'P'
 
 #if 0

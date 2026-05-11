@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2022. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -177,7 +177,7 @@ static char *erts_dop_to_string(enum dop dop) {
 int erts_is_alive; /* System must be blocked on change */
 int erts_dist_buf_busy_limit;
 
-int erts_dflags_test_remove_hopefull_flags;
+Uint64 erts_dflags_test_remove_hopefull_flags;
 
 Export spawn_request_yield_export;
 
@@ -276,6 +276,15 @@ static int monitor_connection_down(ErtsMonitor *mon, void *unused, Sint reds)
 
 static int dist_pend_spawn_exit_connection_down(ErtsMonitor *mon, void *unused, Sint reds)
 {
+    Process *proc = mon->other.ptr;
+    ASSERT(!erts_monitor_is_origin(mon));
+    if (proc) {
+        ErtsMonitorData *mdp = erts_monitor_to_data(mon);
+        if (mdp->origin.other.item == am_pending) {
+            /* Resume the parent process waiting for a result... */
+            erts_resume(proc, 0);
+        }
+    }
     erts_monitor_release(mon);
     return 1;
 }
@@ -983,6 +992,7 @@ int erts_do_net_exits(DistEntry *dep, Eterm reason)
 	    ASSERT(erts_atomic32_read_nob(&dep->qflgs) & ERTS_DE_QFLG_EXIT);
 	}
 	else {
+            ASSERT(dep->state == ERTS_DE_STATE_CONNECTED);
 	    dep->state = ERTS_DE_STATE_EXITING;
 	    erts_mtx_lock(&dep->qlock);
 	    ASSERT(!(erts_atomic32_read_nob(&dep->qflgs) & ERTS_DE_QFLG_EXIT));
@@ -2452,11 +2462,12 @@ int erts_net_message(Port *prt,
             if (!is_external_pid(watcher))
                 goto invalid_message;
             if (erts_this_dist_entry == external_pid_dist_entry(watcher))
-                break;
+                goto monitored_process_not_alive;
             goto invalid_message;
         }
 
         if (!erts_proc_lookup(watcher)) {
+        monitored_process_not_alive:
             if (ede_hfrag != NULL) {
                 erts_free_dist_ext_copy(erts_get_dist_ext(ede_hfrag));
                 free_message_buffer(ede_hfrag);
@@ -3361,7 +3372,7 @@ erts_dsig_send(ErtsDSigSendContext *ctx)
                        (!ctx->no_trap && !ctx->no_suspend));
 
 		erts_mtx_lock(&dep->qlock);
-		qsize = erts_atomic_add_read_nob(&dep->qsize, (erts_aint_t) obsz);
+		qsize = erts_atomic_add_read_mb(&dep->qsize, (erts_aint_t) obsz);
                 ASSERT(qsize >= obsz);
                 qflgs = erts_atomic32_read_nob(&dep->qflgs);
 		if (!(qflgs & ERTS_DE_QFLG_BUSY) && qsize >= erts_dist_buf_busy_limit) {
@@ -3969,17 +3980,18 @@ dist_ctrl_get_data_notification_1(BIF_ALIST_1)
 
     ASSERT(dep->cid == BIF_P->common.id);
 
-    qflgs = erts_atomic32_read_acqb(&dep->qflgs);
+    qflgs = erts_atomic32_read_nob(&dep->qflgs);
 
     if (!(qflgs & ERTS_DE_QFLG_REQ_INFO)) {
-        qsize = erts_atomic_read_acqb(&dep->qsize);
+        ERTS_THR_READ_MEMORY_BARRIER;
+        qsize = erts_atomic_read_nob(&dep->qsize);
         ASSERT(qsize >= 0);
         if (qsize > 0)
             receiver = BIF_P->common.id; /* Notify ourselves... */
         else { /* Empty queue; set req-info flag... */
             qflgs = erts_atomic32_read_bor_mb(&dep->qflgs,
                                                   ERTS_DE_QFLG_REQ_INFO);
-            qsize = erts_atomic_read_acqb(&dep->qsize);
+            qsize = erts_atomic_read_nob(&dep->qsize);
             ASSERT(qsize >= 0);
             if (qsize > 0) {
                 qflgs = erts_atomic32_read_band_mb(&dep->qflgs,
@@ -4685,6 +4697,19 @@ BIF_RETTYPE setnode_2(BIF_ALIST_2)
     success = (!ERTS_PROC_IS_EXITING(net_kernel)
                & !ERTS_PROC_GET_DIST_ENTRY(net_kernel));
     if (success) {
+        /*
+         * Ensure we don't use a nodename-creation pair with
+         * external identifiers existing in the system.
+         */
+        while (!0) {
+            ErlNode *nep;
+            if (creation < 4)
+                creation = 4;
+            nep = erts_find_node(BIF_ARG_1, creation);
+            if (!nep || erts_node_refc(nep) == 0)
+                break;
+            creation++;
+        }
         inc_no_nodes();
         erts_set_this_node(BIF_ARG_1, (Uint32) creation);
         erts_this_dist_entry->creation = creation;
@@ -4939,24 +4964,28 @@ BIF_RETTYPE erts_internal_create_dist_channel_3(BIF_ALIST_3)
                      : dist_port_command);
         ASSERT(dep->send);
 
-        /*
-         * Dist-ports do not use the "busy port message queue" functionality, but
-         * instead use "busy dist entry" functionality.
-        */
-        {
-            ErlDrvSizeT disable = ERL_DRV_BUSY_MSGQ_DISABLED;
-            erl_drv_busy_msgq_limits(ERTS_Port2ErlDrvPort(pp), &disable, NULL);
-        }
-
         conn_id = dep->connection_id;
         set_res = setup_connection_epiloge_rwunlock(BIF_P, dep, BIF_ARG_2, flags,
                                                     creation, BIF_P->common.id,
                                                     net_kernel);
         /* Dec of refc on net_kernel by setup_connection_epiloge_rwunlock() */
         net_kernel = NULL;
-        if (set_res == 0)
+        if (set_res == 0) {
+            erts_atomic32_read_band_nob(&pp->state, ~ERTS_PORT_SFLG_DISTRIBUTION);
+            erts_prtsd_set(pp, ERTS_PRTSD_DIST_ENTRY, NULL);
+            erts_prtsd_set(pp, ERTS_PRTSD_CONN_ID, NULL);
             goto badarg;
+        }
         de_locked = 0;
+
+        /*
+         * Dist-ports do not use the "busy port message queue" functionality,
+         * but instead use "busy dist entry" functionality.
+         */
+        {
+            ErlDrvSizeT disable = ERL_DRV_BUSY_MSGQ_DISABLED;
+            erl_drv_busy_msgq_limits(ERTS_Port2ErlDrvPort(pp), &disable, NULL);
+        }
 
         hp = HAlloc(BIF_P, 3 + ERTS_DHANDLE_SIZE);
         res = erts_build_dhandle(&hp, &BIF_P->off_heap, dep, conn_id);
@@ -5058,6 +5087,7 @@ setup_connection_epiloge_rwunlock(Process *c_p, DistEntry *dep,
             erts_schedule_dist_command(NULL, dep);
         }
         else {
+            ERTS_THR_READ_MEMORY_BARRIER;
             qflgs = erts_atomic32_read_nob(&dep->qflgs);
             if (qflgs & ERTS_DE_QFLG_REQ_INFO) {
                 qflgs = erts_atomic32_read_band_mb(&dep->qflgs,
@@ -5171,17 +5201,18 @@ BIF_RETTYPE erts_internal_get_dflags_0(BIF_ALIST_0)
 {
     if (erts_dflags_test_remove_hopefull_flags) {
         /* For internal emulator tests only! */
+        const Uint64 mask = ~erts_dflags_test_remove_hopefull_flags;
         Eterm *hp, **hpp = NULL;
         Uint sz = 0, *szp = &sz;
         Eterm res;
         while (1) {
             res = erts_bld_tuple(hpp, szp, 6,
                 am_erts_dflags,
-                erts_bld_uint64(hpp, szp, DFLAG_DIST_DEFAULT & ~DFLAG_DIST_HOPEFULLY),
-                erts_bld_uint64(hpp, szp, DFLAG_DIST_MANDATORY & ~DFLAG_DIST_HOPEFULLY),
-                erts_bld_uint64(hpp, szp, DFLAG_DIST_ADDABLE & ~DFLAG_DIST_HOPEFULLY),
-                erts_bld_uint64(hpp, szp, DFLAG_DIST_REJECTABLE & ~DFLAG_DIST_HOPEFULLY),
-                erts_bld_uint64(hpp, szp, DFLAG_DIST_STRICT_ORDER & ~DFLAG_DIST_HOPEFULLY));
+                erts_bld_uint64(hpp, szp, DFLAG_DIST_DEFAULT & mask),
+                erts_bld_uint64(hpp, szp, DFLAG_DIST_MANDATORY & mask),
+                erts_bld_uint64(hpp, szp, DFLAG_DIST_ADDABLE & mask),
+                erts_bld_uint64(hpp, szp, DFLAG_DIST_REJECTABLE & mask),
+                erts_bld_uint64(hpp, szp, DFLAG_DIST_STRICT_ORDER & mask));
             if (hpp) {
                 ASSERT(is_value(res));
                 return res;

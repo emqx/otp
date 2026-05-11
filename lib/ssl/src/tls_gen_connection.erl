@@ -19,7 +19,7 @@
 %%
 %%
 %%----------------------------------------------------------------------
-%% Purpose: 
+%% Purpose:
 %%----------------------------------------------------------------------
 
 -module(tls_gen_connection).
@@ -52,7 +52,7 @@
          empty_connection_state/2,
          encode_handshake/4]).
 
-%% State transition handling	 
+%% State transition handling
 -export([next_event/3,
          next_event/4,
          handle_protocol_record/3]).
@@ -74,38 +74,68 @@
 
 %%====================================================================
 %% Internal application API
-%%====================================================================	     
+%%====================================================================
 %%====================================================================
 %% Setup
 %%====================================================================
-start_fsm(Role, Host, Port, Socket, {#{erl_dist := false},_, Trackers} = Opts,
-	  User, {CbModule, _,_, _, _} = CbInfo, 
-	  Timeout) -> 
-    try 
-        {ok, DynSup} =  tls_connection_sup:start_child([]),
-        {ok, Sender} = tls_dyn_connection_sup:start_child(DynSup, sender, []),
-	{ok, Pid} = tls_dyn_connection_sup:start_child(DynSup, receiver, [Role, Sender, Host, Port, Socket,
-                                                             Opts, User, CbInfo]),
-	{ok, SslSocket} = ssl_gen_statem:socket_control(?MODULE, Socket, [Pid, Sender], CbModule, Trackers),
-        ssl_gen_statem:handshake(SslSocket, Timeout)
-    catch
-	error:{badmatch, {error, _} = Error} ->
-	    Error
-    end;
+start_fsm(Role, Host, Port, Socket,
+          {#{erl_dist := ErlDist}, _, Trackers} = Opts,
+	  User, {CbModule, _, _, _, _} = CbInfo,
+	  Timeout) ->
+    SenderOptions = handle_sender_options(ErlDist),
+    Starter = start_connection_tree(User, ErlDist, SenderOptions,
+                                    Role, [Host, Port, Socket, Opts, User, CbInfo]),
+    receive
+        {Starter, SockReceiver, SockSender} ->
+            socket_control(Socket, SockReceiver, SockSender, CbModule, Trackers, Timeout);
+        {Starter, Error} ->
+            Error
+    end.
 
-start_fsm(Role, Host, Port, Socket, {#{erl_dist := true},_, Trackers} = Opts,
-	  User, {CbModule, _,_, _, _} = CbInfo, 
-	  Timeout) -> 
-    try 
-        {ok, DynSup} =  tls_connection_sup:start_child_dist([]),
-        {ok, Sender} = tls_dyn_connection_sup:start_child(DynSup, sender, [[{spawn_opt, ?DIST_CNTRL_SPAWN_OPTS}]]),
-	{ok, Pid} = tls_dyn_connection_sup:start_child(DynSup, receiver, [Role, Sender, Host, Port, Socket,
-                                                                 Opts, User, CbInfo]),
-	{ok, SslSocket} = ssl_gen_statem:socket_control(?MODULE, Socket, [Pid, Sender], CbModule, Trackers),
-        ssl_gen_statem:handshake(SslSocket, Timeout)
-    catch
-	error:{badmatch, {error, _} = Error} ->
-	    Error
+handle_sender_options(ErlDist) ->
+    case ErlDist of
+        true ->
+            [[{spawn_opt, ?DIST_CNTRL_SPAWN_OPTS}]];
+        false ->
+            [[]]
+    end.
+
+start_connection_tree(User, IsErlDist, SenderOpts, Role, ReceiverOpts) ->
+    StartConnectionTree =
+        fun() ->
+                case start_dyn_connection_sup(IsErlDist) of
+                    {ok, DynSup} ->
+                        case tls_dyn_connection_sup:start_child(DynSup, sender, SenderOpts) of
+                            {ok, Sender} ->
+                                case tls_dyn_connection_sup:start_child(DynSup, receiver,
+                                                                        [Role, Sender | ReceiverOpts]) of
+                                    {ok, Receiver} ->
+                                        User ! {self(), Receiver, Sender};
+                                    {error, Error} ->
+                                        User ! {self(), Error},
+                                        exit(DynSup, shutdown)
+                                end;
+                            {error, Error} ->
+                                User ! {self(), Error},
+                                exit(DynSup, shutdown)
+                        end;
+                    {error, Error} ->
+                        User ! {self(), Error}
+                end
+        end,
+    spawn(StartConnectionTree).
+
+start_dyn_connection_sup(true) ->
+    tls_connection_sup:start_child_dist([]);
+start_dyn_connection_sup(false) ->
+    tls_connection_sup:start_child([]).
+
+socket_control(Socket, SockReceiver, SockSender, CbModule, Trackers, Timeout) ->
+    case ssl_gen_statem:socket_control(?MODULE, Socket, [SockReceiver, SockSender], CbModule, Trackers) of
+        {ok, SslSocket} ->
+            ssl_gen_statem:handshake(SslSocket, Timeout);
+        Error ->
+            Error
     end.
 
 pids(#state{protocol_specific = #{sender := Sender}}) ->
@@ -355,18 +385,28 @@ handle_protocol_record(#ssl_tls{type = ?APPLICATION_DATA}, StateName,
                              } = State) when StateName == initial_hello;
                                              StateName == hello;
                                              StateName == certify;
-                                             StateName == wait_cert_verify,
-                                             StateName == wait_ocsp_stapling,
+                                             StateName == wait_cert_verify;
+                                             StateName == wait_ocsp_stapling;
                                              StateName == abbreviated;
                                              StateName == cipher
                                              ->
     %% Application data can not be sent before initial handshake pre TLS-1.3.
     Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
     ssl_gen_statem:handle_own_alert(Alert, StateName, State);
-handle_protocol_record(#ssl_tls{type = ?APPLICATION_DATA}, start = StateName,
+handle_protocol_record(#ssl_tls{type = ?APPLICATION_DATA, early_data = false}, StateName,
                        #state{static_env = #static_env{role = server}
-                             } = State) ->
-    Alert = ?ALERT_REC(?FATAL, ?DECODE_ERROR, invalid_tls_13_message),
+                             } = State) when StateName == start;
+                                             StateName == recvd_ch;
+                                             StateName == negotiated;
+                                             StateName == wait_eoed ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, none_early_application_data_before_handshake),
+    ssl_gen_statem:handle_own_alert(Alert, StateName, State);
+handle_protocol_record(#ssl_tls{type = ?APPLICATION_DATA}, StateName,
+                       #state{static_env = #static_env{role = server}
+                             } = State) when StateName == wait_cert;
+                                             StateName == wait_cv;
+                                             StateName == wait_finished->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_handshake_or_intervened_in_post_handshake_auth),
     ssl_gen_statem:handle_own_alert(Alert, StateName, State);
 handle_protocol_record(#ssl_tls{type = ?APPLICATION_DATA, fragment = Data}, StateName,
                        #state{start_or_recv_from = From,
@@ -689,32 +729,29 @@ activate_socket(#state{protocol_specific = #{active_n_toggle := true, active_n :
 %% Decipher next record and concatenate consecutive ?APPLICATION_DATA records into one
 %%
 next_record(State, CipherTexts, ConnectionStates, Check) ->
-    next_record(State, CipherTexts, ConnectionStates, Check, []).
+    next_record(State, CipherTexts, ConnectionStates, Check, [], false).
 %%
 next_record(#state{connection_env = #connection_env{negotiated_version = {3,4} = Version}} = State,
-            [CT|CipherTexts], ConnectionStates0, Check, Acc) ->
+            [CT|CipherTexts], ConnectionStates0, Check, Acc, IsEarlyData) ->
     case tls_record:decode_cipher_text(Version, CT, ConnectionStates0, Check) of
-        {#ssl_tls{type = ?APPLICATION_DATA, fragment = Fragment}, ConnectionStates} ->
+        {Record = #ssl_tls{type = ?APPLICATION_DATA, fragment = Fragment}, ConnectionStates} ->
             case CipherTexts of
                 [] ->
                     %% End of cipher texts - build and deliver an ?APPLICATION_DATA record
                     %% from the accumulated fragments
                     next_record_done(State, [], ConnectionStates,
-                                     #ssl_tls{type = ?APPLICATION_DATA,
-                                              fragment = iolist_to_binary(lists:reverse(Acc, [Fragment]))});
+                                     Record#ssl_tls{type = ?APPLICATION_DATA,
+                                                    fragment = iolist_to_binary(lists:reverse(Acc, [Fragment]))});
                 [_|_] ->
-                    next_record(State, CipherTexts, ConnectionStates, Check, [Fragment|Acc])
+                    next_record(State, CipherTexts, ConnectionStates, Check, [Fragment|Acc], Record#ssl_tls.early_data)
             end;
-        {trial_decryption_failed, ConnectionStates} ->
+        {no_record, ConnectionStates} ->
             case CipherTexts of
                 [] ->
-                    %% End of cipher texts - build and deliver an ?APPLICATION_DATA record
-                    %% from the accumulated fragments
-                    next_record_done(State, [], ConnectionStates,
-                                     #ssl_tls{type = ?APPLICATION_DATA,
-                                              fragment = iolist_to_binary(lists:reverse(Acc))});
+                    Record = accumulated_app_record(Acc, IsEarlyData),
+                    next_record_done(State, [], ConnectionStates, Record);
                 [_|_] ->
-                    next_record(State, CipherTexts, ConnectionStates, Check, Acc)
+                    next_record(State, CipherTexts, ConnectionStates, Check, Acc, IsEarlyData)
             end;
         {Record, ConnectionStates} when Acc =:= [] ->
             %% Singleton non-?APPLICATION_DATA record - deliver
@@ -725,33 +762,36 @@ next_record(#state{connection_env = #connection_env{negotiated_version = {3,4} =
             %%    and forget about decrypting this record - we'll decrypt it again next time
             %% Will not work for stream ciphers
             next_record_done(State, [CT|CipherTexts], ConnectionStates0,
-                             #ssl_tls{type = ?APPLICATION_DATA, fragment = iolist_to_binary(lists:reverse(Acc))});
+                             #ssl_tls{type = ?APPLICATION_DATA, 
+                                      early_data = IsEarlyData,
+                                      fragment = iolist_to_binary(lists:reverse(Acc))});
         #alert{} = Alert ->
             Alert
     end;
 next_record(#state{connection_env = #connection_env{negotiated_version = Version}} = State,
-            [#ssl_tls{type = ?APPLICATION_DATA} = CT |CipherTexts], ConnectionStates0, Check, Acc) ->
+            [#ssl_tls{type = ?APPLICATION_DATA} = CT |CipherTexts], ConnectionStates0, Check, Acc, NotRelevant) ->
     case tls_record:decode_cipher_text(Version, CT, ConnectionStates0, Check) of
-        {#ssl_tls{type = ?APPLICATION_DATA, fragment = Fragment}, ConnectionStates} ->
+        {Record = #ssl_tls{type = ?APPLICATION_DATA, fragment = Fragment}, ConnectionStates} ->
             case CipherTexts of
                 [] ->
                     %% End of cipher texts - build and deliver an ?APPLICATION_DATA record
                     %% from the accumulated fragments
                     next_record_done(State, [], ConnectionStates,
-                                     #ssl_tls{type = ?APPLICATION_DATA,
-                                              fragment = iolist_to_binary(lists:reverse(Acc, [Fragment]))});
+                                     Record#ssl_tls{type = ?APPLICATION_DATA,
+                                                    fragment = iolist_to_binary(lists:reverse(Acc, [Fragment]))});
                 [_|_] ->
-                    next_record(State, CipherTexts, ConnectionStates, Check, [Fragment|Acc])
+                    next_record(State, CipherTexts, ConnectionStates, Check, [Fragment|Acc], NotRelevant)
             end;
         #alert{} = Alert ->
             Alert
     end;
-next_record(State, CipherTexts, ConnectionStates, _, [_|_] = Acc) ->
+next_record(State, CipherTexts, ConnectionStates, _, [_|_] = Acc, IsEarlyData) ->
     next_record_done(State, CipherTexts, ConnectionStates,
                      #ssl_tls{type = ?APPLICATION_DATA,
+                              early_data = IsEarlyData,
                               fragment = iolist_to_binary(lists:reverse(Acc))});
 next_record(#state{connection_env = #connection_env{negotiated_version = Version}} = State,
-            [CT|CipherTexts], ConnectionStates0, Check, []) ->
+            [CT|CipherTexts], ConnectionStates0, Check, [], _) ->
     case tls_record:decode_cipher_text(Version, CT, ConnectionStates0, Check) of      
         {Record, ConnectionStates} ->
             %% Singleton non-?APPLICATION_DATA record - deliver
@@ -759,6 +799,13 @@ next_record(#state{connection_env = #connection_env{negotiated_version = Version
         #alert{} = Alert ->
             Alert
     end.
+
+accumulated_app_record([], _) ->
+    no_record;
+accumulated_app_record([_|_] = Acc, IsEarlyData) ->
+    #ssl_tls{type = ?APPLICATION_DATA,
+             early_data = IsEarlyData,
+             fragment = iolist_to_binary(lists:reverse(Acc))}.
 
 next_record_done(#state{protocol_buffers = Buffers} = State, CipherTexts, ConnectionStates, Record) ->
     {Record,

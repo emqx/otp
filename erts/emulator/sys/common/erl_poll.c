@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2006-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2006-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1809,8 +1809,15 @@ get_timeout_timespec(ErtsPollSet *ps,
     }
     else {
 	ErtsMonotonicTime sec = timeout/(1000*1000*1000);
-	tsp->tv_sec = sec;
-	tsp->tv_nsec = timeout - sec*(1000*1000*1000);
+        if (sizeof(tsp->tv_sec) == 8
+            || sec <= (ErtsMonotonicTime) INT_MAX) {
+            tsp->tv_sec = sec;
+            tsp->tv_nsec = timeout - sec*(1000*1000*1000);
+        }
+        else {
+            tsp->tv_sec = INT_MAX;
+            tsp->tv_nsec = 0;
+        }
 
 	ASSERT(tsp->tv_sec >= 0);
 	ASSERT(tsp->tv_nsec >= 0);
@@ -2466,7 +2473,7 @@ ERTS_POLL_EXPORT(erts_poll_get_selected_events)(ErtsPollSet *ps,
     char fname[30];
     char s[256];
     FILE *f;
-    unsigned int pos, flags, mnt_id;
+    unsigned int pos, flags, mnt_id, ino;
     int hdr_lines, line = 1;
     sprintf(fname,"/proc/%d/fdinfo/%d",getpid(), ps->kp_fd);
     for (fd = 0; fd < len; fd++)
@@ -2476,14 +2483,16 @@ ERTS_POLL_EXPORT(erts_poll_get_selected_events)(ErtsPollSet *ps,
         fprintf(stderr,"failed to open file %s, errno = %d\n", fname, errno);
         return;
     }
-    hdr_lines = fscanf(f,"pos:\t%x\nflags:\t%x\nmnt_id:\t%x\n",
-                       &pos, &flags, &mnt_id);
+
+    hdr_lines = fscanf(f,"pos:\t%x\nflags:\t%x\nmnt_id:\t%x\nino:\t%x\n",
+                       &pos, &flags, &mnt_id, &ino);
     if (hdr_lines < 2) {
         fprintf(stderr,"failed to parse file %s, errno = %d\n", fname, errno);
         ASSERT(0);
         fclose(f);
         return;
     }
+
     line += hdr_lines;
     while (fgets(s, sizeof(s) / sizeof(*s), f)) {
         /* tfd:       10 events: 40000019 data:       180000000a */

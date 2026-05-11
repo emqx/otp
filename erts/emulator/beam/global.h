@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2021. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -931,13 +931,6 @@ Eterm erts_bld_bin_list(Uint **hpp, Uint *szp, ErlOffHeap* oh, Eterm tail);
 void erts_bif_info_init(void);
 
 /* bif.c */
-
-void erts_queue_monitor_message(Process *,
-				ErtsProcLocks*,
-				Eterm,
-				Eterm,
-				Eterm,
-				Eterm);
 void erts_init_trap_export(Export* ep, Eterm m, Eterm f, Uint a,
 			   Eterm (*bif)(Process*, Eterm*, ErtsCodePtr));
 void erts_init_bif(void);
@@ -1253,20 +1246,6 @@ extern int erts_jit_asm_dump;
 void erl_start(int, char**);
 void erts_usage(void);
 Eterm erts_preloaded(Process* p);
-
-
-/* erl_md5.c */
-
-typedef struct {
-    Uint32 state[4];		/* state (ABCD) */
-    Uint32 count[2];		/* number of bits, modulo 2^64 (lsb first) */
-    unsigned char buffer[64];	/* input buffer */
-} MD5_CTX;
-
-void MD5Init(MD5_CTX *);
-void MD5Update(MD5_CTX *, unsigned char *, unsigned int);
-void MD5Final(unsigned char [16], MD5_CTX *);
-
 
 /* io.c */
 
