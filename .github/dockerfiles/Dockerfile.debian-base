@@ -11,7 +11,7 @@ ENV HOST_TRIP=$HOST_TRIP
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-ENV INSTALL_LIBS="zlib1g-dev libncurses5-dev libssl-dev unixodbc-dev libgmp3-dev libwxgtk3.0-gtk3-dev libwxgtk-webview3.0-gtk3-dev libwebkit2gtk-4.0-dev libwebkit2gtk-4.0-37 gir1.2-webkit2-4.0 libjavascriptcoregtk-4.0-dev libjavascriptcoregtk-4.0-18 gir1.2-javascriptcoregtk-4.0 libsctp-dev lksctp-tools"
+ENV INSTALL_LIBS="zlib1g-dev libncurses5-dev libssl-dev unixodbc-dev libgmp3-dev libwxgtk3.0-gtk3-dev libwxgtk-webview3.0-gtk3-dev libsctp-dev lksctp-tools"
 ENV CROSS_LIBS="zlib1g-dev libncurses5-dev libssl-dev unixodbc-dev libgmp3-dev libwxgtk3.0-gtk3-dev libsctp-dev lksctp-tools"
 
 ## See https://wiki.debian.org/Multiarch/HOWTO for details on how to install things
