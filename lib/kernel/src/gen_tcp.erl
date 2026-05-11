@@ -14,7 +14,7 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 
@@ -152,8 +152,10 @@ ipv6_probe() -> true.
 %% Connect a socket
 %%
 
+ipv6_probe() -> true.
+
 -spec connect(SockAddr, Opts) -> {ok, Socket} | {error, Reason} when
-      SockAddr :: socket:sockaddr_in() | socket:sockaddr_in6(),
+      SockAddr :: socket:sockaddr_in() | socket:sockaddr_in6() | inet:hostname(),
       Opts     :: [inet:inet_backend() | connect_option()],
       Socket   :: socket(),
       Reason   :: inet:posix().
@@ -319,7 +321,7 @@ try_connect([IP|IPs], Port, Opts, Timer, Mod, _) ->
 try_connect([], _Port, _Opts, _Timer, _Mod, Err) ->
     Err.
 
-    
+
 
 %%
 %% Listen on a tcp port
@@ -509,7 +511,7 @@ controlling_process(S, NewOwner) ->
 
 
 %%
-%% Create a port/socket from a file descriptor 
+%% Create a port/socket from a file descriptor
 %%
 fdopen(Fd, Opts0) ->
     case inet:gen_tcp_module(Opts0) of

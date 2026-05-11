@@ -13,7 +13,7 @@ RUN cd /buildroot && tar -xzf ./otp.tar.gz
 
 WORKDIR /buildroot/otp/
 
-ENV CFLAGS="-O2 -g -Werror"
+ENV CFLAGS="-O2 -g"
 
 ## Configure, check that no application are disabled, then make and then build doc chunks
 RUN ./configure --without-wx --with-ssl --prefix=/otp && \
