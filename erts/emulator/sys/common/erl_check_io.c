@@ -497,7 +497,12 @@ erts_io_notify_port_task_executed(ErtsPortTaskType type,
             ASSERT(!(state->active_events & ERTS_POLL_EV_IN));
             if (state->events & ERTS_POLL_EV_IN) {
                 active_events |= ERTS_POLL_EV_IN;
-                if (state->count > 10 && ERTS_POLL_USE_SCHEDULER_POLLING) {
+                // Bump the trigger to 999.
+                // for normal port, it should be large enough.
+                // for dist port, as workaround, we need 1000 pings to warm up the port
+                // as dist port is always active true.
+                // another workaround is to 'define ERTS_POLL_USE_SCHEDULER_POLLING 0'
+                if (state->count > 999 && ERTS_POLL_USE_SCHEDULER_POLLING) {
                     if (!(state->flags & ERTS_EV_FLAG_SCHEDULER))
                         op = ERTS_POLL_OP_ADD;
                     state->flags |= ERTS_EV_FLAG_IN_SCHEDULER|ERTS_EV_FLAG_SCHEDULER;
