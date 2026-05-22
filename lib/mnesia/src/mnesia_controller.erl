@@ -1711,9 +1711,26 @@ add_active_replica(Tab, Node) ->
     add_active_replica(Tab, Node, val({Tab, cstruct})).
 
 add_active_replica(Tab, Node, Cs = #cstruct{}) ->
-    Storage = mnesia_lib:schema_cs_to_storage_type(Node, Cs),
-    AccessMode = Cs#cstruct.access_mode,
-    add_active_replica(Tab, Node, Storage, AccessMode).
+    case mnesia_lib:cs_to_storage_type(Node, Cs) of
+	unknown when Cs#cstruct.name /= schema ->
+	    %% cstruct does not list Node as a copy holder of Tab. The
+	    %% caller's intent (register Node as an active replica) is
+	    %% incoherent with the schema. Trust the schema and purge any
+	    %% stale runtime state for Node on Tab. This self-heals leftover
+	    %% entries from a missed del_active_replica (netsplit recovery,
+	    %% reordered loaded notifications, etc.) and prevents
+	    %% mnesia_tm:prepare_node/5 from later crashing with
+	    %% {case_clause, unknown}.
+	    del_active_replica(Tab, Node);
+	unknown ->
+	    %% Schema table: preserve the historical fallback that treats
+	    %% unknown storage as ram_copies.
+	    AccessMode = Cs#cstruct.access_mode,
+	    add_active_replica(Tab, Node, ram_copies, AccessMode);
+	Storage ->
+	    AccessMode = Cs#cstruct.access_mode,
+	    add_active_replica(Tab, Node, Storage, AccessMode)
+    end.
 
 %% Block table primitives
 
@@ -1739,6 +1756,14 @@ mark_blocked_tab(false, Value) ->
 
 %%
 
+add_active_replica(Tab, Node, unknown, _AccessMode) ->
+    %% Defensive: arrived via the RPC path (handle_call({add_active_replica,
+    %% [Tab, ToNode, RemoteS, AccessMode], _})) with an 'unknown' storage
+    %% pushed in by a peer. Same reasoning as the cstruct-based variant
+    %% above: refuse to record {Node, unknown} and instead purge any stale
+    %% entry so where_to_commit / where_to_write / active_replicas stay
+    %% consistent with what the schema actually says about Node.
+    del_active_replica(Tab, Node);
 add_active_replica(Tab, Node, Storage, AccessMode) ->
     Var = {Tab, where_to_commit},
     {Blocked, Old} = is_tab_blocked(val(Var)),
