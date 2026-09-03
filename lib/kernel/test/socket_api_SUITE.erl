@@ -200,6 +200,7 @@
          api_opt_simple_otp_options/1,
          api_opt_simple_otp_meta_option/1,
          api_opt_simple_otp_rcvbuf_option/1,
+         api_opt_otp_rcvbuf_nokeep/1,
          api_opt_simple_otp_controlling_process/1,
          api_opt_sock_acceptconn_udp/1,
          api_opt_sock_acceptconn_tcp/1,
@@ -508,6 +509,7 @@ api_options_otp_cases() ->
      api_opt_simple_otp_options,
      api_opt_simple_otp_meta_option,
      api_opt_simple_otp_rcvbuf_option,
+     api_opt_otp_rcvbuf_nokeep,
      api_opt_simple_otp_controlling_process
     ].
 
@@ -12002,6 +12004,53 @@ api_opt_simple_otp_rcvbuf_option() ->
     i("await evaluator(s)"),
     ok = ?SEV_AWAIT_FINISH([Server, Client, Tester]).
 
+
+%% Verify that the no-keep rcvbuf mode only releases the receive buffer when
+%% a zero-length receive would block.
+api_opt_otp_rcvbuf_nokeep(Config) when is_list(Config) ->
+    ?TT(?SECS(15)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> is_not_windows() end,
+           fun() -> api_opt_otp_rcvbuf_nokeep() end).
+
+api_opt_otp_rcvbuf_nokeep() ->
+    Domain = inet_or_inet6(),
+    LSock = sock_open(Domain, stream, tcp),
+    ok = sock_bind(LSock, which_local_socket_addr(Domain)),
+    ok = socket:listen(LSock),
+    ServerSA = sock_sockname(LSock),
+    ClientSock = sock_open(Domain, stream, tcp),
+    ok = sock_connect(ClientSock, ServerSA),
+    {ok, Sock} = socket:accept(LSock),
+
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
+    ok = socket:setopt(Sock, otp, rcvbuf, 4096),
+    {select, KeepSelectInfo} = socket:recv(Sock, 0, nowait),
+    NBufAllocs1 = binary_alloc_count(prim_socket, drv_binary),
+    NBufAllocs1 = NBufAllocs0 + 1,
+    ok = socket:cancel(Sock, KeepSelectInfo),
+
+    NoKeepRcvBuf = {false, 4096},
+    ok = socket:setopt(Sock, otp, rcvbuf, NoKeepRcvBuf),
+    {ok, NoKeepRcvBuf} = socket:getopt(Sock, otp, rcvbuf),
+    {select, SelectInfo} = socket:recv(Sock, 0, nowait),
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
+    ok = socket:cancel(Sock, SelectInfo),
+
+    {select, NonzeroSelectInfo} = socket:recv(Sock, 4096, nowait),
+    NBufAllocs1 = binary_alloc_count(prim_socket, drv_binary),
+    ok = socket:cancel(Sock, NonzeroSelectInfo),
+    {select, ReleaseSelectInfo} = socket:recv(Sock, 0, nowait),
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
+    ok = socket:cancel(Sock, ReleaseSelectInfo).
+
+
+binary_alloc_count(Origin, Type) ->
+    {ok, {_, 0, Allocations}} =
+        instrument:allocations(#{allocator_types => [binary_alloc]}),
+    OriginAllocations = maps:get(Origin, Allocations, #{}),
+    Histogram = maps:get(Type, OriginAllocations, {}),
+    lists:sum(tuple_to_list(Histogram)).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
