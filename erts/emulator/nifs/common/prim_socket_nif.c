@@ -456,7 +456,7 @@ static void (*esock_sctp_freepaddrs)(struct sockaddr *addrs) = NULL;
 
 
 
-#define ESOCK_RECV_BUFFER_COUNT_DEFAULT     0
+#define ESOCK_RECV_BUFFER_COUNT_DEFAULT     1
 #if defined(__WIN32__)
 #define ESOCK_RECV_BUFFER_SIZE_DEFAULT      (32*1024)
 #else
@@ -7051,7 +7051,7 @@ ERL_NIF_TERM esock_setopt_otp_ctrl_proc(ErlNifEnv*       env,
  * The (otp) rcvbuf option is provided as:
  *
  *       BufSz :: default | pos_integer() |
- *           {N :: pos_integer(), Sz :: default | pos_integer()}
+ *           {N :: false | pos_integer(), Sz :: default | pos_integer()}
  *
  * Where N is the max number of reads.
  * Note that on Windows the tuple variant is not allowed!
@@ -7102,15 +7102,22 @@ ERL_NIF_TERM esock_setopt_otp_rcvbuf(ErlNifEnv*       env,
                            eVal,
                            ESOCK_RECV_BUFFER_SIZE_DEFAULT,
                            &bufSz)) {
-        n = 0; // Reported as an integer buffer size by getopt
+        n = ESOCK_RECV_BUFFER_COUNT_DEFAULT;
     } else {
         if ((! GET_TUPLE(env, eVal, &tsz, &t)) ||
             (tsz != 2) ||
-            (! GET_UINT(env, t[0], &n)) ||
-            (n == 0) ||
             (! esock_decode_bufsz(env, t[1],
                                   ESOCK_RECV_BUFFER_SIZE_DEFAULT,
                                   &bufSz))) {
+            SSDBG( descP,
+                   ("SOCKET",
+                    "esock_setopt_otp_rcvbuf {%d} -> done invalid\r\n",
+                    descP->sock) );
+            return esock_make_invalid(env, esock_atom_value);
+        }
+        if (IS_IDENTICAL(t[0], esock_atom_false)) {
+            n = 0;
+        } else if ((! GET_UINT(env, t[0], &n)) || (n == 0)) {
             SSDBG( descP,
                    ("SOCKET",
                     "esock_setopt_otp_rcvbuf {%d} -> done invalid\r\n",
@@ -7126,7 +7133,10 @@ ERL_NIF_TERM esock_setopt_otp_rcvbuf(ErlNifEnv*       env,
         return esock_make_invalid(env, esock_atom_value);
 
 #ifndef __WIN32__
-    descP->rNum   = n;
+    descP->rNum = n;
+    /* Setting nokeep mode does not release an existing buffer here;
+     * release only happens when a size 0 receive would block.
+     */
 #endif
     if (bufSz < ESOCK_RECV_BUFFER_SIZE_MIN)
         descP->rBufSz = ESOCK_RECV_BUFFER_SIZE_MIN;
@@ -8871,6 +8881,10 @@ ERL_NIF_TERM esock_getopt_otp_rcvbuf(ErlNifEnv*       env,
     eVal = MKUL(env, (unsigned long) descP->rBufSz);
 #else
     if (descP->rNum == 0) {
+        eVal = MKT2(env,
+                    esock_atom_false,
+                    MKUL(env, (unsigned long) descP->rBufSz));
+    } else if (descP->rNum == 1) {
         eVal = MKUL(env, (unsigned long) descP->rBufSz);
     } else {
         eVal = MKT2(env,

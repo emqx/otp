@@ -2772,7 +2772,11 @@ ERL_NIF_TERM essio_recv(ErlNifEnv*       env,
     /* Check for errors and end of stream */
     if (! recv_check_result(env, descP, sockRef, recvRef,
                             readResult, saveErrno, &ret) ) {
-        /* Keep the buffer */
+        if ((descP->rNum == 0) && (len == 0) &&
+            ((saveErrno == ERRNO_BLOCK) || (saveErrno == EAGAIN))) {
+            FREE_BIN(bufP);
+            bufP->data = NULL;
+        }
         return ret;
     }
     /* readResult >= 0 */
@@ -2860,7 +2864,11 @@ ERL_NIF_TERM essio_recvfrom(ErlNifEnv*       env,
     /* Check for errors and end of stream */
     if (! recv_check_result(env, descP, sockRef, recvRef,
                             readResult, saveErrno, &ret) ) {
-        /* Keep the buffer */
+        if ((descP->rNum == 0) && (len == 0) &&
+            ((saveErrno == ERRNO_BLOCK) || (saveErrno == EAGAIN))) {
+            FREE_BIN(bufP);
+            bufP->data = NULL;
+        }
         return ret;
     }
     /* readResult >= 0 */
@@ -2981,7 +2989,11 @@ ERL_NIF_TERM essio_recvmsg(ErlNifEnv*       env,
     /* Check for errors and end of stream */
     if (! recv_check_result(env, descP, sockRef, recvRef,
                             readResult, saveErrno, &ret) ) {
-        /* Keep the data buffer */
+        if ((descP->rNum == 0) && (bufLen == 0) &&
+            ((saveErrno == ERRNO_BLOCK) || (saveErrno == EAGAIN))) {
+            FREE_BIN(bufP);
+            bufP->data = NULL;
+        }
         FREE_BIN(&ctrl);
         return ret;
     }
