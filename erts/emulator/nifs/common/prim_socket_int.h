@@ -82,6 +82,8 @@
 #define ESOCK_DESC_PATTERN_CREATED 0x03030303
 #define ESOCK_DESC_PATTERN_DTOR    0xC0C0C0C0
 
+#define ESOCK_RECV_BUFFER_NOKEEP   0
+
 
 /* ==========================================================================
  * The ESOCK_IS_ERROR macro below is used for portability reasons.

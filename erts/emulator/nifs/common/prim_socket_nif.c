@@ -7116,7 +7116,7 @@ ERL_NIF_TERM esock_setopt_otp_rcvbuf(ErlNifEnv*       env,
             return esock_make_invalid(env, esock_atom_value);
         }
         if (IS_IDENTICAL(t[0], esock_atom_false)) {
-            n = 0;
+            n = ESOCK_RECV_BUFFER_NOKEEP;
         } else if ((! GET_UINT(env, t[0], &n)) || (n == 0)) {
             SSDBG( descP,
                    ("SOCKET",
@@ -8880,7 +8880,7 @@ ERL_NIF_TERM esock_getopt_otp_rcvbuf(ErlNifEnv*       env,
 #ifdef __WIN32__
     eVal = MKUL(env, (unsigned long) descP->rBufSz);
 #else
-    if (descP->rNum == 0) {
+    if (descP->rNum == ESOCK_RECV_BUFFER_NOKEEP) {
         eVal = MKT2(env,
                     esock_atom_false,
                     MKUL(env, (unsigned long) descP->rBufSz));
