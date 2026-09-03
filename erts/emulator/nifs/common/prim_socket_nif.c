@@ -6578,7 +6578,8 @@ int esock_close_socket(ErlNifEnv*       env,
     esock_dec_socket(descP->domain, descP->type, descP->protocol);
 
     /* +++++++ Clear the meta option +++++++ */
-    enif_clear_env(descP->meta.env);
+    if (descP->meta.env != NULL)
+        enif_clear_env(descP->meta.env);
     descP->meta.ref = esock_atom_undefined;
 
     if (descP->closeOnClose) {
@@ -7260,7 +7261,13 @@ ERL_NIF_TERM esock_setopt_otp_meta(ErlNifEnv*       env,
         return esock_make_error_invalid(env, esock_atom_not_owner);
     }
 
-    enif_clear_env(descP->meta.env);
+    if (descP->meta.env == NULL) {
+        descP->meta.env = esock_alloc_env("esock_setopt_otp_meta - "
+                                          "meta-env");
+    } else {
+        enif_clear_env(descP->meta.env);
+    }
+
     descP->meta.ref = CP_TERM(descP->meta.env, eVal);
 
     SSDBG( descP,
@@ -8984,7 +8991,10 @@ ERL_NIF_TERM esock_getopt_otp_meta(ErlNifEnv*       env,
         return esock_make_error_closed(env);
     }
 
-    eVal = CP_TERM(env, descP->meta.ref);
+    if (descP->meta.env == NULL)
+        eVal = esock_atom_undefined;
+    else
+        eVal = CP_TERM(env, descP->meta.ref);
 
     SSDBG( descP,
            ("SOCKET", "esock_getopt_otp_meta {%d} ->"
@@ -12171,8 +12181,7 @@ ESockDescriptor* esock_alloc_descriptor(SOCKET sock)
     descP->dbg              = ESOCK_DEBUG_DEFAULT;      // Overwritten by caller
     descP->selectRead       = FALSE;
     descP->useReg           = ESOCK_USE_SOCKET_REGISTRY;// Overwritten by caller
-    descP->meta.env         = esock_alloc_env("esock_alloc_descriptor - "
-                                              "meta-env");
+    descP->meta.env         = NULL;
     descP->meta.ref         = esock_atom_undefined;
 
     descP->sock             = sock;
