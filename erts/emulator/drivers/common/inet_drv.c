@@ -968,6 +968,10 @@ static size_t my_strnlen(const char *s, size_t maxlen)
 #define INET_STAT_SEND_PND   8
 #define INET_STAT_RECV_OCT   9      /* received octets */ 
 #define INET_STAT_SEND_OCT   10     /* sent octets */
+#define INET_STAT_RECV_PKT_SIZE  11
+#define INET_STAT_RECV_BUF_SIZE  12
+#define INET_STAT_RECV_BUF_ALLOC 13
+#define INET_STAT_RECV_BUF_PEND  14
 
 /* INET_IFOPT_FLAGS enumeration */
 #define INET_IFF_UP            0x0001
@@ -10758,6 +10762,34 @@ static ErlDrvSSizeT inet_fill_stat(inet_descriptor* desc,
 #endif
 	    dst += 8;
 	    continue;
+	case INET_STAT_RECV_BUF_SIZE: {
+	    tcp_descriptor* tcp = (tcp_descriptor*) desc;
+	    put_int64(tcp->i_buf == NULL ? 0 : tcp->i_bufsz, dst);
+	    dst += 8;
+	    continue;
+	}
+	case INET_STAT_RECV_BUF_ALLOC: {
+	    tcp_descriptor* tcp = (tcp_descriptor*) desc;
+	    put_int64(tcp->i_buf == NULL ? 0 : tcp->i_buf->orig_size, dst);
+	    dst += 8;
+	    continue;
+	}
+	case INET_STAT_RECV_BUF_PEND: {
+	    tcp_descriptor* tcp = (tcp_descriptor*) desc;
+	    put_int64(tcp->i_buf == NULL ? 0 : tcp->i_ptr - tcp->i_ptr_start, dst);
+	    dst += 8;
+	    continue;
+	}
+	case INET_STAT_RECV_PKT_SIZE: {
+	    tcp_descriptor* tcp = (tcp_descriptor*) desc;
+	    Uint64 val8 = 0;
+	    /* Known incomplete packet, or an exact-length passive raw receive. */
+	    if (tcp->i_buf != NULL && tcp->i_remain > 0)
+	        val8 = (Uint64) (tcp->i_ptr - tcp->i_ptr_start) + tcp->i_remain;
+	    put_int64(val8, dst);
+	    dst += 8;
+	    continue;
+	}
 	default: return -1; /* invalid argument */
 	}
 	put_int32(val, dst);  /* write 32bit value */
@@ -10979,6 +11011,14 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 
 	  for (i = 0; i < len; i++) {
 	      switch(buf[i]) {
+	      case INET_STAT_RECV_PKT_SIZE:
+	      case INET_STAT_RECV_BUF_SIZE:
+	      case INET_STAT_RECV_BUF_ALLOC:
+	      case INET_STAT_RECV_BUF_PEND:
+	          if (desc->stype != SOCK_STREAM || IS_SCTP(desc))
+	              return ctl_error(EINVAL, rbuf, rsize);
+	          dstlen += 9;
+	          break;
 	      case INET_STAT_SEND_OCT: dstlen += 9; break;
 	      case INET_STAT_RECV_OCT: dstlen += 9; break;
 	      default: dstlen += 5; break;

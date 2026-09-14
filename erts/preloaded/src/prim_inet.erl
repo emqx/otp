@@ -2706,6 +2706,10 @@ enc_stats([H|T]) ->
 	send_pend -> [?INET_STAT_SEND_PEND|enc_stats(T)];
 	send_oct  -> [?INET_STAT_SEND_OCT |enc_stats(T)];
 	recv_oct  -> [?INET_STAT_RECV_OCT |enc_stats(T)];
+	recv_pkt_size  -> [?INET_STAT_RECV_PKT_SIZE |enc_stats(T)];
+	recv_buf_size  -> [?INET_STAT_RECV_BUF_SIZE |enc_stats(T)];
+	recv_buf_pend  -> [?INET_STAT_RECV_BUF_PEND |enc_stats(T)];
+	recv_buf_alloc -> [?INET_STAT_RECV_BUF_ALLOC |enc_stats(T)];
 	_ -> throw(einval)
     end;
 enc_stats([]) -> [].
@@ -2725,6 +2729,18 @@ dec_stats([?INET_STAT_SEND_OCT,X7,X6,X5,X4,X3,X2,X1,X0|R]) ->
 dec_stats([?INET_STAT_RECV_OCT,X7,X6,X5,X4,X3,X2,X1,X0|R]) ->
     Val = ?u64(X7,X6,X5,X4,X3,X2,X1,X0),
     [{recv_oct, Val}|dec_stats(R)];
+dec_stats([Op,X7,X6,X5,X4,X3,X2,X1,X0|R]) when
+      Op =:= ?INET_STAT_RECV_PKT_SIZE orelse
+      Op =:= ?INET_STAT_RECV_BUF_SIZE orelse
+      Op =:= ?INET_STAT_RECV_BUF_PEND orelse
+      Op =:= ?INET_STAT_RECV_BUF_ALLOC ->
+    Name = case Op of
+               ?INET_STAT_RECV_PKT_SIZE -> recv_pkt_size;
+               ?INET_STAT_RECV_BUF_SIZE -> recv_buf_size;
+               ?INET_STAT_RECV_BUF_PEND -> recv_buf_pend;
+               ?INET_STAT_RECV_BUF_ALLOC -> recv_buf_alloc
+           end,
+    [{Name,?u64(X7,X6,X5,X4,X3,X2,X1,X0)}|dec_stats(R)];
 dec_stats([X,X3,X2,X1,X0|R]) ->
     Val = ?u32(X3,X2,X1,X0),
     case X of

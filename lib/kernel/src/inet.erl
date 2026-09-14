@@ -605,7 +605,8 @@ by the Solaris API function `getaddrinfo()`.
 -doc(#{group => <<"Exported data types">>}).
 -type stat_option() ::
 	'recv_cnt' | 'recv_max' | 'recv_avg' | 'recv_oct' | 'recv_dvi' |
-	'send_cnt' | 'send_max' | 'send_avg' | 'send_oct' | 'send_pend'.
+	'send_cnt' | 'send_max' | 'send_avg' | 'send_oct' | 'send_pend' |
+	'recv_pkt_size' | 'recv_buf_pend' | 'recv_buf_size' | 'recv_buf_alloc'.
 
 -doc """
 Ancillary data / control messages.
@@ -2540,6 +2541,35 @@ The following options are available:
 - **`send_max`** - Size of the largest packet, in bytes, sent from the socket.
 
 - **`send_oct`** - Number of bytes sent from the socket.
+
+Following EMQX extensions are available. Request them explicitly with `getstat/2`.
+These options are only available for TCP sockets using `{inet_backend, inet}`.
+
+- **`recv_pkt_size`** - Total expected size in bytes of the next packet to be
+  delivered, including framing bytes, when the receive loop is waiting for a
+  known number of missing bytes. In packet mode `raw` (`0`), this is the
+  requested size of an outstanding exact-length receive. Returns `0` when
+  no expected length is recorded, including when buffered data has not yet
+  been parsed or a receive timeout has cleared that state.
+
+- **`recv_buf_pend`** - Total number of received bytes buffered but not yet
+  delivered, regardless of whether the packet length is known. May include
+  bytes from subsequent packets. Bytes still in the operating system's
+  receive buffer are not included.
+
+- **`recv_buf_size`** - Logical size in bytes of the current input buffer.
+  This can differ from the configured `buffer` socket option.
+
+- **`recv_buf_alloc`** - Capacity in bytes of the binary backing the current
+  input buffer, excluding binary and allocator headers. Cached binaries can
+  make this larger than `recv_buf_size` even when no data is buffered.
+
+The buffer statistics return `0` when no input buffer is attached.
+
+Request `recv_pkt_size` and `recv_buf_pend` together to measure receive progress.
+When `recv_pkt_size` is nonzero, all `recv_buf_pend` bytes belong to the current
+incomplete packet (or exact-length raw receive). When `recv_pkt_size` is `0`,
+packet progress cannot be determined from these statistics.
 """.
 -spec getstat(Socket, Options) ->
 	{ok, OptionValues} | {error, posix()} when
