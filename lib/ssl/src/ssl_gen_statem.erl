@@ -2122,6 +2122,7 @@ set_socket_opts(ConnectionCb, Transport,Socket, [{packet, Packet}| Opts], SockOp
        Packet == sunrm;
        Packet == fcgi;
        Packet == tpkt;
+       Packet == mqtt;
        Packet == line;
        Packet == http;
        Packet == httph;
