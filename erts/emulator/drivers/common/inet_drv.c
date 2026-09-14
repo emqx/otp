@@ -12676,7 +12676,7 @@ static int tcp_recv_closed(tcp_descriptor* desc)
 #endif
     int blocking_send = 0;
     DEBUGF(("tcp_recv_closed(%p): s=%d, in %s, line %d\r\n",
-	    port, desc->inet.s, __LINE__));
+	    port, desc->inet.s, __FILE__, __LINE__));
     if (IS_BUSY(INETP(desc))) {
 	/* A send is blocked */
 	tcp_clear_output(desc);
