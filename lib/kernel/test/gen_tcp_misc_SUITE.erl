@@ -68,6 +68,9 @@
      getstat_recv/1,
      getstat_recv_packets/1,
      getstat_recv_raw/1,
+     getstat_recv_zero_timeout/1,
+     recv_zero_timeout_packets/1,
+     recv_zero_timeout_active/1,
      getstat_recv_udp/1,
 	 passive_sockets/1, accept_closed_by_other_process/1,
 	 init_per_testcase/2, end_per_testcase/2,
@@ -235,6 +238,9 @@ all_std_cases() ->
      getstat_recv,
      getstat_recv_packets,
      getstat_recv_raw,
+     getstat_recv_zero_timeout,
+     recv_zero_timeout_packets,
+     recv_zero_timeout_active,
      getstat_recv_udp,
      {group, busy_disconnect},
      fill_sendq,
@@ -1468,6 +1474,103 @@ getstat_recv_raw(_Config) ->
     end,
     _ = getstat_recv_wait(S, 0, 0),
     ok.
+
+%% Zero-timeout receives clear the expected length but retain partial input.
+getstat_recv_zero_timeout(_Config) ->
+    {ok, L} = gen_tcp:listen(0, [{inet_backend, inet}, binary, {active, false},
+                               {ip, {127,0,0,1}}, {buffer, 1024}]),
+    {ok, {_, Port}} = inet:sockname(L),
+    {ok, C} = gen_tcp:connect({127,0,0,1}, Port,
+                             [{inet_backend, inet}, binary, {active, false}]),
+    {ok, S} = gen_tcp:accept(L, 5000),
+    Stats = [recv_pkt_size, recv_buf_pend, recv_buf_size, recv_buf_alloc],
+    ?assertEqual({error, timeout}, gen_tcp:recv(S, 10, 0)),
+    {ok, Empty} = inet:getstat(S, Stats),
+    ?assertMatch([{recv_pkt_size, 0}, {recv_buf_pend, 0},
+                  {recv_buf_size, 10}, {recv_buf_alloc, A}] when A >= 10, Empty),
+    ok = gen_tcp:send(C, <<"hello">>),
+    %% Passive sockets need another recv call to pull bytes from the OS.
+    ct:sleep(50),
+    ?assertEqual({error, timeout}, gen_tcp:recv(S, 10, 0)),
+    {ok, Partial} = inet:getstat(S, Stats),
+    ?assertMatch([{recv_pkt_size, 0}, {recv_buf_pend, 5},
+                  {recv_buf_size, 10} | _], Partial),
+    ?assertEqual({error, timeout}, gen_tcp:recv(S, 10, 0)),
+    ?assertEqual({ok, Partial}, inet:getstat(S, Stats)),
+    %% A smaller request succeeds immediately using the retained bytes.
+    ?assertEqual({ok, <<"hello">>}, gen_tcp:recv(S, 5, 0)),
+    {ok, Cleared} = inet:getstat(S, Stats),
+    ?assertEqual([{recv_pkt_size, 0}, {recv_buf_pend, 0},
+                  {recv_buf_size, 0}, {recv_buf_alloc, 0}], Cleared),
+    %% Retrying the original receive recalculates the missing byte count.
+    ok = gen_tcp:send(C, <<"hello">>),
+    ct:sleep(50),
+    ?assertEqual({error, timeout}, gen_tcp:recv(S, 10, 0)),
+    {ok, Ref} = prim_inet:async_recv(S, 10, 5000),
+    ?assertEqual({ok, [{recv_pkt_size, 10}, {recv_buf_pend, 5}]},
+                 inet:getstat(S, [recv_pkt_size, recv_buf_pend])),
+    ok = gen_tcp:send(C, <<"world">>),
+    receive
+        {inet_async, S, Ref, Result} ->
+            ?assertEqual({ok, <<"helloworld">>}, Result)
+    after 1000 -> ct:fail(raw_retry_timeout) end,
+    ?assertEqual({ok, Cleared}, inet:getstat(S, Stats)),
+    ok.
+
+%% Framed receives recover the expected length from the retained header.
+recv_zero_timeout_packets(_Config) ->
+    {ok, L} = gen_tcp:listen(0, [{inet_backend, inet}, binary, {active, false},
+                               {packet, mqtt}, {ip, {127,0,0,1}}, {buffer, 1024}]),
+    {ok, {_, Port}} = inet:sockname(L),
+    {ok, C} = gen_tcp:connect({127,0,0,1}, Port,
+                             [{inet_backend, inet}, binary, {active, false}]),
+    {ok, S} = gen_tcp:accept(L, 5000),
+    ok = gen_tcp:send(C, <<48,8,"hel">>),
+    ct:sleep(50),
+    ?assertEqual({error, timeout}, gen_tcp:recv(S, 0, 0)),
+    ?assertEqual({ok, [{recv_pkt_size, 0}, {recv_buf_pend, 5}]},
+                 inet:getstat(S, [recv_pkt_size, recv_buf_pend])),
+    {ok, PacketRef} = prim_inet:async_recv(S, 0, 5000),
+    ?assertEqual({ok, [{recv_pkt_size, 10}, {recv_buf_pend, 5}]},
+                 inet:getstat(S, [recv_pkt_size, recv_buf_pend])),
+    ok = gen_tcp:send(C, <<"lowor">>),
+    receive
+        {inet_async, S, PacketRef, PacketResult} ->
+            ?assertEqual({ok, <<48,8,"hellowor">>}, PacketResult)
+    after 1000 -> ct:fail(packet_retry_timeout) end,
+    ok = gen_tcp:send(C, <<48,8,"hel">>),
+    ct:sleep(50),
+    ?assertEqual({error, timeout}, gen_tcp:recv(S, 0, 0)),
+    ?assertEqual({ok, [{recv_pkt_size, 0}, {recv_buf_pend, 5}]},
+                 inet:getstat(S, [recv_pkt_size, recv_buf_pend])),
+    ok = inet:setopts(S, [{active, once}]),
+    ?assertEqual({ok, [{recv_pkt_size, 10}, {recv_buf_pend, 5}]},
+                 inet:getstat(S, [recv_pkt_size, recv_buf_pend])),
+    ok = gen_tcp:send(C, <<"lowor">>),
+    receive
+        {tcp, S, <<48,8,"hellowor">>} -> ok
+    after 1000 -> ct:fail(packet_active_timeout) end,
+    ?assertEqual({ok, [{recv_pkt_size, 0}, {recv_buf_pend, 0}]},
+                 inet:getstat(S, [recv_pkt_size, recv_buf_pend])),
+    ok.
+
+%% Active raw mode delivers retained bytes without waiting for a timed-out size.
+recv_zero_timeout_active(_Config) ->
+    {ok, L} = gen_tcp:listen(0, [{inet_backend, inet}, binary, {active, false},
+                               {ip, {127,0,0,1}}, {buffer, 1024}]),
+    {ok, {_, Port}} = inet:sockname(L),
+    {ok, C} = gen_tcp:connect({127,0,0,1}, Port,
+                             [{inet_backend, inet}, binary, {active, false}]),
+    {ok, S} = gen_tcp:accept(L, 5000),
+    ok = gen_tcp:send(C, <<"hello">>),
+    ct:sleep(50),
+    ?assertEqual({error, timeout}, gen_tcp:recv(S, 10, 0)),
+    ?assertEqual({ok, [{recv_buf_pend, 5}]}, inet:getstat(S, [recv_buf_pend])),
+    ok = inet:setopts(S, [{active, once}]),
+    receive
+        {tcp, S, <<"hello">>} -> ok
+    after 1000 -> ct:fail(raw_active_timeout)
+    end.
 
 getstat_recv_wait(S, Expected, Buffered) ->
     getstat_recv_wait(S, Expected, Buffered, 50).

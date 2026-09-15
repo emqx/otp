@@ -12316,9 +12316,10 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	    return ctl_error(EALREADY, rbuf, rsize);
 
 	if (INET_IGNORED(INETP(desc)) || tcp_recv(desc, n) == 0) {
-	    if (timeout == 0)
+	    if (timeout == 0) {
+		desc->i_remain = 0;
 		async_error_am(INETP(desc), am_timeout);
-	    else {
+	    } else {
 		if (timeout != INET_INFINITY)
                     add_multi_timer(desc, INETP(desc)->port, am_undefined,
                                     timeout, &tcp_inet_recv_timeout);
