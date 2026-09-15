@@ -10718,6 +10718,11 @@ static ErlDrvSSizeT inet_fill_stat(inet_descriptor* desc,
     *dst++ = INET_REP_OK;     /* put reply code */
     while (len--) {
 	op = *src++;
+        /* Receive-buffer statistics only apply to TCP descriptors. */
+        if ((desc->stype != SOCK_STREAM || IS_SCTP(desc)) &&
+            (op == INET_STAT_RECV_PKT_SIZE || op == INET_STAT_RECV_BUF_SIZE ||
+             op == INET_STAT_RECV_BUF_ALLOC || op == INET_STAT_RECV_BUF_PEND))
+            continue;
 	*dst++ = op;  /* copy op code */
 	switch(op) {
 	case INET_STAT_RECV_CNT:  
@@ -11016,7 +11021,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	      case INET_STAT_RECV_BUF_ALLOC:
 	      case INET_STAT_RECV_BUF_PEND:
 	          if (desc->stype != SOCK_STREAM || IS_SCTP(desc))
-	              return ctl_error(EINVAL, rbuf, rsize);
+	              break;
 	          dstlen += 9;
 	          break;
 	      case INET_STAT_SEND_OCT: dstlen += 9; break;

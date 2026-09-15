@@ -71,7 +71,7 @@
      getstat_recv_zero_timeout/1,
      recv_zero_timeout_packets/1,
      recv_zero_timeout_active/1,
-     getstat_recv_udp/1,
+     getstat_recv_socket/1,
 	 passive_sockets/1, accept_closed_by_other_process/1,
 	 init_per_testcase/2, end_per_testcase/2,
 	 otp_3924/1, closed_socket/1,
@@ -241,7 +241,7 @@ all_std_cases() ->
      getstat_recv_zero_timeout,
      recv_zero_timeout_packets,
      recv_zero_timeout_active,
-     getstat_recv_udp,
+     getstat_recv_socket,
      {group, busy_disconnect},
      fill_sendq,
      {group, partial_recv_and_close},
@@ -1588,13 +1588,18 @@ getstat_recv_wait(S, Expected, Buffered, Retries) ->
             ct:fail({receive_state_timeout, {Expected, Buffered}, Values})
     end.
 
-%% Receive-buffer statistics are only supported by TCP inet sockets.
-getstat_recv_udp(_Config) ->
-    {ok, U} = gen_udp:open(0, [{inet_backend, inet}]),
-    ?assertEqual({error, einval}, inet:getstat(U, [recv_pkt_size])),
-    ?assertEqual({error, einval}, inet:getstat(U, [recv_buf_pend])),
-    ?assertEqual({error, einval}, inet:getstat(U, [recv_buf_size])),
-    ?assertEqual({error, einval}, inet:getstat(U, [recv_buf_alloc])),
+%% The socket backend omits receive-buffer keys for both TCP and UDP.
+getstat_recv_socket(_Config) ->
+    Keys = [recv_pkt_size, recv_buf_pend, recv_buf_size, recv_buf_alloc],
+    Mixed = [recv_pkt_size, recv_cnt, recv_buf_pend,
+             recv_buf_size, recv_oct, recv_buf_alloc],
+    {ok, T} = gen_tcp:listen(0, [{inet_backend, socket}, {active, false},
+                               {ip, {127,0,0,1}}]),
+    ?assertEqual({ok, []}, inet:getstat(T, Keys)),
+    ?assertEqual({ok, [{recv_cnt, 0}, {recv_oct, 0}]}, inet:getstat(T, Mixed)),
+    {ok, U} = gen_udp:open(0, [{inet_backend, socket}]),
+    ?assertEqual({ok, []}, inet:getstat(U, Keys)),
+    ?assertEqual({ok, [{recv_cnt, 0}, {recv_oct, 0}]}, inet:getstat(U, Mixed)),
     ok.
 
 %% OTP-2924. Test that the socket process does not crash when

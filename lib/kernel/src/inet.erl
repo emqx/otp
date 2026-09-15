@@ -2544,6 +2544,8 @@ The following options are available:
 
 Following EMQX extensions are available. Request them explicitly with `getstat/2`.
 These options are only available for TCP sockets using `{inet_backend, inet}`.
+For other protocols or the `socket` backend, these keys are omitted from the
+returned list. Supported statistics in the same request are still returned.
 
 - **`recv_pkt_size`** - Total expected size in bytes of the next packet to be
   delivered, including framing bytes, when the receive loop is waiting for a
