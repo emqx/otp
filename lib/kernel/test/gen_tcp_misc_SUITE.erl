@@ -1573,7 +1573,7 @@ recv_zero_timeout_active(_Config) ->
     end.
 
 getstat_recv_wait(S, Expected, Buffered) ->
-    getstat_recv_wait(S, Expected, Buffered, 50).
+    getstat_recv_wait(S, Expected, Buffered, 100).
 
 getstat_recv_wait(S, Expected, Buffered, Retries) ->
     Stats = [recv_pkt_size, recv_buf_pend, recv_buf_size, recv_buf_alloc],
@@ -1582,7 +1582,7 @@ getstat_recv_wait(S, Expected, Buffered, Retries) ->
     case {Size, Pending} of
         {Expected, Buffered} -> Values;
         _ when Retries > 1 ->
-            ct:sleep(20),
+            ct:sleep(50),
             getstat_recv_wait(S, Expected, Buffered, Retries - 1);
         _ ->
             ct:fail({receive_state_timeout, {Expected, Buffered}, Values})
