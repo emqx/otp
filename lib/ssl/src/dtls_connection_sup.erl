@@ -45,12 +45,22 @@ start_link() ->
 start_link_dist() ->
     supervisor:start_link({local, dtls_connection_sup_dist}, ?MODULE, []).
 
-start_child(Args) ->
-    supervisor:start_child(?MODULE, Args).
-        
-start_child_dist(Args) ->
-    supervisor:start_child(dtls_connection_sup_dist, Args).
-    
+start_child([_Role, _Host, _Port, _Socket, {SslOpts, _, _}, _User, _CbInfo] = Args) ->
+    start_child(?MODULE, SslOpts, Args).
+
+start_child_dist([_Role, _Host, _Port, _Socket, {SslOpts, _, _}, _User, _CbInfo] = Args) ->
+    start_child(dtls_connection_sup_dist, SslOpts, Args).
+
+start_child(Module, SslOpts, Args) ->
+    ReceiverSpawnOpts = maps:get(receiver_spawn_opts, SslOpts, []),
+    case supervisor:start_child(Module, [self(), ReceiverSpawnOpts]) of
+        {ok, Pid} ->
+            Pid ! {self(), options, Args},
+            {ok, Pid};
+        Error ->
+            Error
+    end.
+
 %%%=========================================================================
 %%%  Supervisor callback
 %%%=========================================================================
