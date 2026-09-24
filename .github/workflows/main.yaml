@@ -37,6 +37,8 @@ name: Build and check Erlang/OTP
 
 on:
   push:
+    tags:
+      - 'OTP-*'
   pull_request:
   schedule:
       - cron: 0 1 * * *

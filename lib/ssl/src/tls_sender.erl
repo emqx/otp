@@ -383,8 +383,12 @@ connection(info, {send, From, Ref, Data}, _StateData) ->
     {keep_state_and_data,
      [{next_event, {call, {self(), undefined}},
        {application_data, erlang:iolist_to_iovec(Data)}}]};
-connection(timeout, hibernate, _StateData) ->
-    {keep_state_and_data, [hibernate]};
+connection(timeout, hibernate, #data{connection_states = ConnectionStates} = StateData) ->
+    %% The AEAD handles are a cache; drop them so that an idle connection
+    %% does not hold one per direction. The next record recreates them.
+    {keep_state, StateData#data{connection_states =
+                                    ssl_record:drop_aead_handles(ConnectionStates)},
+     [hibernate]};
 connection(Type, Msg, StateData) ->
     handle_common(connection, Type, Msg, StateData).
 
@@ -425,7 +429,7 @@ handshake(cast, {new_write, WriteState, Version, MaxFragLen},
     case Version of
         ?TLS_1_3 ->
             maybe_traffic_keylog_1_3(Fun, Role, ConnectionStates, N);
-        _ ->
+         _ ->
             ok
     end,
     {next_state, connection,
@@ -735,12 +739,8 @@ strip_bytes(_, []) ->
     [].
 
 new_async(#data{env = #env{socket_opts_tab = Tab}}) ->
-    Read = fun(Key, Def) ->
-                   try ets:lookup_element(Tab, Key, 2)
-                   catch _:_ -> Def
-                   end
-           end,
-    #async{high = Read(high_watermark, 8192), low = Read(low_watermark, 4096)}.
+    #async{high = ssl_shared_opts:get_high_watermark(Tab, 8192),
+           low = ssl_shared_opts:get_low_watermark(Tab, 4096)}.
 
 log_error(Atom) when is_atom(Atom) ->
     ?SSL_LOG(notice, "ssl send socket error", Atom);

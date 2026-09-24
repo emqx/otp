@@ -174,6 +174,14 @@
          packet_tpkt_decode/1,
          packet_tpkt_decode_list/0,
          packet_tpkt_decode_list/1,
+         packet_mqtt_passive/0,
+         packet_mqtt_passive/1,
+         packet_mqtt_active_once/0,
+         packet_mqtt_active_once/1,
+         packet_switch_raw_to_mqtt/0,
+         packet_switch_raw_to_mqtt/1,
+         packet_switch_mqtt_to_raw/0,
+         packet_switch_mqtt_to_raw/1,
          reject_packet_opt/0,
          reject_packet_opt/1
         ]).
@@ -219,7 +227,14 @@
          add_tpkt_header/1,
          client_reject_packet_opt/2,
          send_switch_packet/3,
-         recv_switch_packet/3
+         recv_switch_packet/3,
+         send_mqtt_frames/2,
+         passive_recv_mqtt_frames/2,
+         active_once_recv_mqtt_frames/2,
+         send_raw_to_mqtt/3,
+         recv_raw_to_mqtt/2,
+         send_mqtt_to_raw/2,
+         recv_mqtt_to_raw/2
          ]).
 
 -define(BYTE(X),     X:8/unsigned-big-integer).
@@ -240,6 +255,9 @@
 -define(BASE_TIMEOUT_SECONDS, 20).
 -define(SOME_SCALE, 2).
 -define(MANY_SCALE, 3).
+
+-define(MQTT_CONNECT, <<16#10, 2, 0, 0>>).
+-define(MQTT_PINGREQ, <<16#C0, 0>>).
 
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
@@ -276,7 +294,15 @@ protocol_packet_tests() ->
 	 packet_http_bin_decode_multi,
 	 packet_line_decode, packet_line_decode_list,
 	 packet_asn1_decode, packet_asn1_decode_list,
-	 packet_sunrm_decode, packet_sunrm_decode_list].
+	 packet_sunrm_decode, packet_sunrm_decode_list] ++
+        mqtt_packet_tests().
+
+mqtt_packet_tests() ->
+    [packet_mqtt_passive,
+     packet_mqtt_active_once,
+     packet_switch_raw_to_mqtt,
+     packet_switch_mqtt_to_raw
+    ].
 
 socket_passive_packet_tests() ->
     [packet_raw_passive_many_small,
@@ -982,6 +1008,117 @@ packet_switch(Config) when is_list(Config) ->
     ssl_test_lib:close(Server),
     ssl_test_lib:close(Client).
 
+
+%%--------------------------------------------------------------------
+packet_mqtt_passive() ->
+    [{doc,"Test packet option {packet, mqtt} in passive mode"}].
+
+packet_mqtt_passive(Config) when is_list(Config) ->
+    packet_mqtt(Config, false, passive_recv_mqtt_frames).
+
+%%--------------------------------------------------------------------
+packet_mqtt_active_once() ->
+    [{doc,"Test packet option {packet, mqtt} in active once mode"}].
+
+packet_mqtt_active_once(Config) when is_list(Config) ->
+    packet_mqtt(Config, once, active_once_recv_mqtt_frames).
+
+packet_mqtt(Config, Active, Recv) ->
+    ClientOpts = ssl_test_lib:ssl_options(client_rsa_verify_opts, Config),
+    ServerOpts = ssl_test_lib:ssl_options(server_rsa_verify_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+
+    %% 205 bytes remaining length, encoded in two bytes
+    Big = mqtt_publish(binary:copy(<<"x">>, 200)),
+    <<BigHead:2/binary, BigMid:10/binary, BigTail/binary>> = Big,
+    %% Two whole frames in one send, then one frame split inside its
+    %% remaining length field and again inside its body
+    Sends = [<<?MQTT_CONNECT/binary, ?MQTT_PINGREQ/binary>>, BigHead, BigMid, BigTail],
+    Frames = [?MQTT_CONNECT, ?MQTT_PINGREQ, Big],
+
+    Server = ssl_test_lib:start_server([{node, ClientNode}, {port, 0},
+					{from, self()},
+					{mfa, {?MODULE, Recv, [length(Frames)]}},
+					{options, [{active, Active}, {mode, binary},
+                                                   {nodelay, true}, {packet, mqtt} |
+                                                   ServerOpts]}]),
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ServerNode}, {port, Port},
+					{host, Hostname},
+					{from, self()},
+					{mfa, {?MODULE, send_mqtt_frames, [Sends]}},
+					{options, [{active, false}, {mode, binary},
+                                                   {nodelay, true} | ClientOpts]}]),
+
+    ssl_test_lib:check_result(Server, Frames, Client, ok),
+
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+
+%%--------------------------------------------------------------------
+packet_switch_raw_to_mqtt() ->
+    [{doc,"Test switching from {packet, raw} to {packet, mqtt} with data "
+      "received in raw mode still buffered"}].
+
+packet_switch_raw_to_mqtt(Config) when is_list(Config) ->
+    ClientOpts = ssl_test_lib:ssl_options(client_rsa_verify_opts, Config),
+    ServerOpts = ssl_test_lib:ssl_options(server_rsa_verify_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+
+    Publish = mqtt_publish(<<"hello">>),
+    <<Head:3/binary, Tail/binary>> = Publish,
+
+    Server = ssl_test_lib:start_server([{node, ClientNode}, {port, 0},
+					{from, self()},
+					{mfa, {?MODULE, recv_raw_to_mqtt, [Publish]}},
+					{options, [{active, false}, {mode, binary},
+                                                   {nodelay, true}, {packet, raw} |
+                                                   ServerOpts]}]),
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ServerNode}, {port, Port},
+					{host, Hostname},
+					{from, self()},
+					{mfa, {?MODULE, send_raw_to_mqtt, [Head, Tail]}},
+					{options, [{active, false}, {mode, binary},
+                                                   {nodelay, true} | ClientOpts]}]),
+
+    ssl_test_lib:check_result(Server, ok, Client, ok),
+
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+
+%%--------------------------------------------------------------------
+packet_switch_mqtt_to_raw() ->
+    [{doc,"Test switching from {packet, mqtt} to {packet, raw} with a "
+      "partial frame buffered"}].
+
+packet_switch_mqtt_to_raw(Config) when is_list(Config) ->
+    ClientOpts = ssl_test_lib:ssl_options(client_rsa_verify_opts, Config),
+    ServerOpts = ssl_test_lib:ssl_options(server_rsa_verify_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+
+    %% The fixed header and topic length of a PUBLISH frame without its
+    %% topic and payload: an incomplete frame in mqtt mode
+    <<Rest:4/binary, _/binary>> = mqtt_publish(<<"hello">>),
+
+    Server = ssl_test_lib:start_server([{node, ClientNode}, {port, 0},
+					{from, self()},
+					{mfa, {?MODULE, recv_mqtt_to_raw, [Rest]}},
+					{options, [{active, false}, {mode, binary},
+                                                   {nodelay, true}, {packet, mqtt} |
+                                                   ServerOpts]}]),
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ServerNode}, {port, Port},
+					{host, Hostname},
+					{from, self()},
+					{mfa, {?MODULE, send_mqtt_to_raw, [Rest]}},
+					{options, [{active, false}, {mode, binary},
+                                                   {nodelay, true} | ClientOpts]}]),
+
+    ssl_test_lib:check_result(Server, ok, Client, ok),
+
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
 
 %%--------------------------------------------------------------------
 packet_cdr_decode() ->
@@ -2567,6 +2704,63 @@ client_reject_packet_opt(Config, PacketOpt) ->
     ssl_test_lib:check_result(Client2, {error, {options, {socket_options, PacketOpt}}}),
     ssl_test_lib:close(Server),
     ssl_test_lib:close(Client2).
+
+mqtt_publish(Payload) ->
+    Body = <<0, 3, "a/b", Payload/binary>>,
+    <<16#30, (mqtt_varint(byte_size(Body)))/binary, Body/binary>>.
+
+mqtt_varint(N) when N < 128 ->
+    <<N>>;
+mqtt_varint(N) ->
+    <<(N band 127 bor 128), (mqtt_varint(N bsr 7))/binary>>.
+
+send_mqtt_frames(Socket, Sends) ->
+    lists:foreach(fun(Bin) ->
+                          ok = ssl:send(Socket, Bin),
+                          %% Make the receiver likely to see the chunks one
+                          %% by one. The result does not depend on it: the
+                          %% same frames are expected if chunks arrive together.
+                          ct:sleep(100)
+                  end, Sends).
+
+passive_recv_mqtt_frames(Socket, N) ->
+    [begin
+         {ok, Frame} = ssl:recv(Socket, 0),
+         Frame
+     end || _ <- lists:seq(1, N)].
+
+active_once_recv_mqtt_frames(Socket, N) ->
+    [receive
+         {ssl, Socket, Frame} ->
+             ok = ssl:setopts(Socket, [{active, once}]),
+             Frame
+     end || _ <- lists:seq(1, N)].
+
+send_raw_to_mqtt(Socket, Head, Tail) ->
+    ok = ssl:send(Socket, <<?MQTT_CONNECT/binary, ?MQTT_PINGREQ/binary, Head/binary>>),
+    {ok, <<"ack">>} = ssl:recv(Socket, 0),
+    ok = ssl:send(Socket, Tail).
+
+recv_raw_to_mqtt(Socket, Publish) ->
+    %% Read only the CONNECT frame in raw mode; the PINGREQ frame and the
+    %% head of the PUBLISH frame stay in the ssl user data buffer
+    {ok, ?MQTT_CONNECT} = ssl:recv(Socket, byte_size(?MQTT_CONNECT)),
+    ok = ssl:setopts(Socket, [{packet, mqtt}]),
+    {ok, [{packet, mqtt}]} = ssl:getopts(Socket, [packet]),
+    {ok, ?MQTT_PINGREQ} = ssl:recv(Socket, 0),
+    {error, timeout} = ssl:recv(Socket, 0, 500),
+    ok = ssl:send(Socket, <<"ack">>),
+    {ok, Publish} = ssl:recv(Socket, 0),
+    ok.
+
+send_mqtt_to_raw(Socket, Rest) ->
+    ok = ssl:send(Socket, <<?MQTT_PINGREQ/binary, Rest/binary>>).
+
+recv_mqtt_to_raw(Socket, Rest) ->
+    {ok, ?MQTT_PINGREQ} = ssl:recv(Socket, 0),
+    ok = ssl:setopts(Socket, [{packet, raw}]),
+    {ok, Rest} = ssl:recv(Socket, 0),
+    ok.
 
 send_switch_packet(SslSocket, Data, NextPacket) ->
     spawn(fun() -> ssl:send(SslSocket, Data) end),
