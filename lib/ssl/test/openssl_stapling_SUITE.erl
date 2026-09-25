@@ -24,6 +24,7 @@
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("public_key/include/public_key.hrl").
+-include_lib("ssl/src/ssl_handshake.hrl").
 -include("ssl_test_lib.hrl").
 
 %% Callback functions
@@ -47,7 +48,8 @@
          cert_status_undetermined/0, cert_status_undetermined/1,
          staple_missing/0, staple_missing/1,
          staple_missing_atom/0, staple_missing_atom/1,
-         staple_missing_verify_fun/0, staple_missing_verify_fun/1
+         staple_missing_verify_fun/0, staple_missing_verify_fun/1,
+         stapling_server/0, stapling_server/1
         ]).
 
 %% spawn export
@@ -66,12 +68,12 @@ all() ->
      {group, 'dtlsv1.2'}].
 
 groups() ->
-    [{'tlsv1.3', [], ocsp_tests()},
+    [{'tlsv1.3', [], ocsp_tests() ++ ocsp_server_tests()},
      {'tlsv1.3_issuer_nonce', [], [staple_by_issuer, staple_with_nonce]},
      {'tlsv1.3_no_next_update', [], no_next_update_tests()},
      {no_next_update, [], [{group, 'tlsv1.3_no_next_update'}]},
      {no_resp_certs, [], [{group, 'tlsv1.3_issuer_nonce'}]},
-     {'tlsv1.2', [], ocsp_tests()},
+     {'tlsv1.2', [], ocsp_tests() ++ ocsp_server_tests()},
      {'dtlsv1.2', [], ocsp_tests()}].
 
 ocsp_tests() ->
@@ -94,6 +96,9 @@ negative() ->
      staple_missing,
      staple_missing_atom,
      staple_missing_verify_fun].
+
+ocsp_server_tests() ->
+    [stapling_server].
 
 %%--------------------------------------------------------------------
 init_per_suite(Config0) ->
@@ -152,7 +157,8 @@ init_per_testcase_helper(Testcase, Config0) ->
                                 staple_by_trusted => "erlangCA",
                                 staple_by_designated => "b.server",
                                 staple_not_designated => "a.server",
-                                staple_wrong_issuer => "localhost"},
+                                staple_wrong_issuer => "localhost",
+                                stapling_server => "b.server"},
             ResponderFolder = maps:get(Testcase, TestcaseMapping, Default),
             start_ocsp_responder(
                 [{responder_folder, ResponderFolder} | Config0]) ++ Config0;
@@ -371,6 +377,61 @@ stapling_negative_helper(Config, CACertsPath, ServerVariant, ExpectedError, Stap
     ssl_test_lib:close(Server).
 
 %%--------------------------------------------------------------------
+stapling_server() ->
+    [{doc, "Verify basic OCSP stapling works (server side)"}].
+stapling_server(Config0)
+  when is_list(Config0) ->
+    PrivDir = proplists:get_value(priv_dir, Config0),
+    ResponderPort = proplists:get_value(responder_port, Config0),
+    OCSPRespPath = make_certs:make_ocsp_response(ResponderPort, PrivDir, "otpCA",
+                                                 "server", "b.server",
+                                                 make_certs:default_config()),
+    {ok, OCSPRespDer} = file:read_file(OCSPRespPath),
+    ServerOpts = proplists:get_value(server_opts, Config0, []),
+    Config = [ {server_opts, [ {sni_fun,
+                                fun(SN) ->  ocsp_sni_fun(SN, OCSPRespDer) end}
+                             | ServerOpts]}
+             | Config0],
+    stapling_server_helper(Config, []).
+
+stapling_server_helper(Config, Opts) ->
+    Data = "ping",  %% 4 bytes
+    %% GroupName = undefined,
+    %% ServerOpts = [{group, GroupName}],
+    ServerOpts = [],
+    Server = ssl_test_lib:start_server(erlang,
+                                       [{options, ServerOpts}],
+                                       Config),
+    Port = ssl_test_lib:inet_port(Server),
+
+    ClientOpts = ssl_test_lib:ssl_options(Opts, Config),
+    Client = ssl_test_lib:start_client(openssl,
+                                       [{port, Port},
+                                        {options, ClientOpts},
+                                        {server_name_indication, "server"},
+                                        {ocsp_stapling, true},
+                                        {ocsp_nonce, false},
+                                        {debug_openssl, false}],
+                                       Config),
+    true = is_pid(Client),
+    ct:sleep(1000),
+    {messages, ClientMsgs} = process_info(Client, messages),
+    [OCSPOutput] = [Output ||
+                       {_Port, {data, Output}} <- ClientMsgs,
+                       case re:run(Output, "OCSP response") of
+                           {match, _} -> true;
+                           _ -> false
+                       end],
+    {match, _} = re:run(OCSPOutput, "Response Status: successful"),
+    {match, _} = re:run(OCSPOutput, "Cert Status:"),
+
+    ssl_test_lib:check_active_receive(Server, "Hello world"),
+    ssl_test_lib:send(Client, Data),
+    Data = ssl_test_lib:check_active_receive(Server, Data),
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+
+%%--------------------------------------------------------------------
 %% Internal functions -----------------------------------------------
 %%--------------------------------------------------------------------
 start_ocsp_responder(Config) ->
@@ -454,3 +515,9 @@ get_free_port() ->
     {ok, Port} = inet:port(Listen),
     ok = gen_tcp:close(Listen),
     Port.
+
+ocsp_sni_fun(_Servername, OCSPRespDer) ->
+    [{certificate_status, #certificate_status{
+                             status_type = 1,
+                             response = OCSPRespDer
+                            }}].

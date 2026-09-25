@@ -59,7 +59,8 @@ MODULES= \
 	ext_test_server \
 	mnesia_index_plugin_test \
 	mnesia_external_backend_test \
-	gen_tcp_blocking_dist
+	gen_tcp_blocking_dist \
+	mnesia_match_delete_test
 
 DocExamplesDir := ../doc/src/
 
