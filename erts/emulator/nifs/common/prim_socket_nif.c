@@ -456,7 +456,7 @@ static void (*esock_sctp_freepaddrs)(struct sockaddr *addrs) = NULL;
 
 
 
-#define ESOCK_RECV_BUFFER_COUNT_DEFAULT     0
+#define ESOCK_RECV_BUFFER_COUNT_DEFAULT     1
 #if defined(__WIN32__)
 #define ESOCK_RECV_BUFFER_SIZE_DEFAULT      (32*1024)
 #else
@@ -6578,7 +6578,8 @@ int esock_close_socket(ErlNifEnv*       env,
     esock_dec_socket(descP->domain, descP->type, descP->protocol);
 
     /* +++++++ Clear the meta option +++++++ */
-    enif_clear_env(descP->meta.env);
+    if (descP->meta.env != NULL)
+        enif_clear_env(descP->meta.env);
     descP->meta.ref = esock_atom_undefined;
 
     if (descP->closeOnClose) {
@@ -7050,7 +7051,7 @@ ERL_NIF_TERM esock_setopt_otp_ctrl_proc(ErlNifEnv*       env,
  * The (otp) rcvbuf option is provided as:
  *
  *       BufSz :: default | pos_integer() |
- *           {N :: pos_integer(), Sz :: default | pos_integer()}
+ *           {N :: false | pos_integer(), Sz :: default | pos_integer()}
  *
  * Where N is the max number of reads.
  * Note that on Windows the tuple variant is not allowed!
@@ -7101,15 +7102,22 @@ ERL_NIF_TERM esock_setopt_otp_rcvbuf(ErlNifEnv*       env,
                            eVal,
                            ESOCK_RECV_BUFFER_SIZE_DEFAULT,
                            &bufSz)) {
-        n = 0; // Reported as an integer buffer size by getopt
+        n = ESOCK_RECV_BUFFER_COUNT_DEFAULT;
     } else {
         if ((! GET_TUPLE(env, eVal, &tsz, &t)) ||
             (tsz != 2) ||
-            (! GET_UINT(env, t[0], &n)) ||
-            (n == 0) ||
             (! esock_decode_bufsz(env, t[1],
                                   ESOCK_RECV_BUFFER_SIZE_DEFAULT,
                                   &bufSz))) {
+            SSDBG( descP,
+                   ("SOCKET",
+                    "esock_setopt_otp_rcvbuf {%d} -> done invalid\r\n",
+                    descP->sock) );
+            return esock_make_invalid(env, esock_atom_value);
+        }
+        if (IS_IDENTICAL(t[0], esock_atom_false)) {
+            n = ESOCK_RECV_BUFFER_NOKEEP;
+        } else if ((! GET_UINT(env, t[0], &n)) || (n == 0)) {
             SSDBG( descP,
                    ("SOCKET",
                     "esock_setopt_otp_rcvbuf {%d} -> done invalid\r\n",
@@ -7125,7 +7133,10 @@ ERL_NIF_TERM esock_setopt_otp_rcvbuf(ErlNifEnv*       env,
         return esock_make_invalid(env, esock_atom_value);
 
 #ifndef __WIN32__
-    descP->rNum   = n;
+    descP->rNum = n;
+    /* Setting nokeep mode does not release an existing buffer here;
+     * release only happens when a size 0 receive would block.
+     */
 #endif
     if (bufSz < ESOCK_RECV_BUFFER_SIZE_MIN)
         descP->rBufSz = ESOCK_RECV_BUFFER_SIZE_MIN;
@@ -7260,7 +7271,13 @@ ERL_NIF_TERM esock_setopt_otp_meta(ErlNifEnv*       env,
         return esock_make_error_invalid(env, esock_atom_not_owner);
     }
 
-    enif_clear_env(descP->meta.env);
+    if (descP->meta.env == NULL) {
+        descP->meta.env = esock_alloc_env("esock_setopt_otp_meta - "
+                                          "meta-env");
+    } else {
+        enif_clear_env(descP->meta.env);
+    }
+
     descP->meta.ref = CP_TERM(descP->meta.env, eVal);
 
     SSDBG( descP,
@@ -8863,7 +8880,11 @@ ERL_NIF_TERM esock_getopt_otp_rcvbuf(ErlNifEnv*       env,
 #ifdef __WIN32__
     eVal = MKUL(env, (unsigned long) descP->rBufSz);
 #else
-    if (descP->rNum == 0) {
+    if (descP->rNum == ESOCK_RECV_BUFFER_NOKEEP) {
+        eVal = MKT2(env,
+                    esock_atom_false,
+                    MKUL(env, (unsigned long) descP->rBufSz));
+    } else if (descP->rNum == 1) {
         eVal = MKUL(env, (unsigned long) descP->rBufSz);
     } else {
         eVal = MKT2(env,
@@ -8984,7 +9005,10 @@ ERL_NIF_TERM esock_getopt_otp_meta(ErlNifEnv*       env,
         return esock_make_error_closed(env);
     }
 
-    eVal = CP_TERM(env, descP->meta.ref);
+    if (descP->meta.env == NULL)
+        eVal = esock_atom_undefined;
+    else
+        eVal = CP_TERM(env, descP->meta.ref);
 
     SSDBG( descP,
            ("SOCKET", "esock_getopt_otp_meta {%d} ->"
@@ -12171,8 +12195,7 @@ ESockDescriptor* esock_alloc_descriptor(SOCKET sock)
     descP->dbg              = ESOCK_DEBUG_DEFAULT;      // Overwritten by caller
     descP->selectRead       = FALSE;
     descP->useReg           = ESOCK_USE_SOCKET_REGISTRY;// Overwritten by caller
-    descP->meta.env         = esock_alloc_env("esock_alloc_descriptor - "
-                                              "meta-env");
+    descP->meta.env         = NULL;
     descP->meta.ref         = esock_atom_undefined;
 
     descP->sock             = sock;
