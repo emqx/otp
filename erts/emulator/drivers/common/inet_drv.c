@@ -968,6 +968,10 @@ static size_t my_strnlen(const char *s, size_t maxlen)
 #define INET_STAT_SEND_PND   8
 #define INET_STAT_RECV_OCT   9      /* received octets */ 
 #define INET_STAT_SEND_OCT   10     /* sent octets */
+#define INET_STAT_RECV_PKT_SIZE  11
+#define INET_STAT_RECV_BUF_SIZE  12
+#define INET_STAT_RECV_BUF_ALLOC 13
+#define INET_STAT_RECV_BUF_PEND  14
 
 /* INET_IFOPT_FLAGS enumeration */
 #define INET_IFF_UP            0x0001
@@ -10714,6 +10718,11 @@ static ErlDrvSSizeT inet_fill_stat(inet_descriptor* desc,
     *dst++ = INET_REP_OK;     /* put reply code */
     while (len--) {
 	op = *src++;
+        /* Receive-buffer statistics only apply to TCP descriptors. */
+        if ((desc->stype != SOCK_STREAM || IS_SCTP(desc)) &&
+            (op == INET_STAT_RECV_PKT_SIZE || op == INET_STAT_RECV_BUF_SIZE ||
+             op == INET_STAT_RECV_BUF_ALLOC || op == INET_STAT_RECV_BUF_PEND))
+            continue;
 	*dst++ = op;  /* copy op code */
 	switch(op) {
 	case INET_STAT_RECV_CNT:  
@@ -10758,6 +10767,34 @@ static ErlDrvSSizeT inet_fill_stat(inet_descriptor* desc,
 #endif
 	    dst += 8;
 	    continue;
+	case INET_STAT_RECV_BUF_SIZE: {
+	    tcp_descriptor* tcp = (tcp_descriptor*) desc;
+	    put_int64(tcp->i_buf == NULL ? 0 : tcp->i_bufsz, dst);
+	    dst += 8;
+	    continue;
+	}
+	case INET_STAT_RECV_BUF_ALLOC: {
+	    tcp_descriptor* tcp = (tcp_descriptor*) desc;
+	    put_int64(tcp->i_buf == NULL ? 0 : tcp->i_buf->orig_size, dst);
+	    dst += 8;
+	    continue;
+	}
+	case INET_STAT_RECV_BUF_PEND: {
+	    tcp_descriptor* tcp = (tcp_descriptor*) desc;
+	    put_int64(tcp->i_buf == NULL ? 0 : tcp->i_ptr - tcp->i_ptr_start, dst);
+	    dst += 8;
+	    continue;
+	}
+	case INET_STAT_RECV_PKT_SIZE: {
+	    tcp_descriptor* tcp = (tcp_descriptor*) desc;
+	    Uint64 val8 = 0;
+	    /* Known incomplete packet, or an exact-length passive raw receive. */
+	    if (tcp->i_buf != NULL && tcp->i_remain > 0)
+	        val8 = (Uint64) (tcp->i_ptr - tcp->i_ptr_start) + tcp->i_remain;
+	    put_int64(val8, dst);
+	    dst += 8;
+	    continue;
+	}
 	default: return -1; /* invalid argument */
 	}
 	put_int32(val, dst);  /* write 32bit value */
@@ -10979,6 +11016,14 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 
 	  for (i = 0; i < len; i++) {
 	      switch(buf[i]) {
+	      case INET_STAT_RECV_PKT_SIZE:
+	      case INET_STAT_RECV_BUF_SIZE:
+	      case INET_STAT_RECV_BUF_ALLOC:
+	      case INET_STAT_RECV_BUF_PEND:
+	          if (desc->stype != SOCK_STREAM || IS_SCTP(desc))
+	              break;
+	          dstlen += 9;
+	          break;
 	      case INET_STAT_SEND_OCT: dstlen += 9; break;
 	      case INET_STAT_RECV_OCT: dstlen += 9; break;
 	      default: dstlen += 5; break;
@@ -12276,9 +12321,10 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	    return ctl_error(EALREADY, rbuf, rsize);
 
 	if (INET_IGNORED(INETP(desc)) || tcp_recv(desc, n) == 0) {
-	    if (timeout == 0)
+	    if (timeout == 0) {
+		desc->i_remain = 0;
 		async_error_am(INETP(desc), am_timeout);
-	    else {
+	    } else {
 		if (timeout != INET_INFINITY)
                     add_multi_timer(desc, INETP(desc)->port, am_undefined,
                                     timeout, &tcp_inet_recv_timeout);
@@ -12676,7 +12722,7 @@ static int tcp_recv_closed(tcp_descriptor* desc)
 #endif
     int blocking_send = 0;
     DEBUGF(("tcp_recv_closed(%p): s=%d, in %s, line %d\r\n",
-	    port, desc->inet.s, __LINE__));
+	    port, desc->inet.s, __FILE__, __LINE__));
     if (IS_BUSY(INETP(desc))) {
 	/* A send is blocked */
 	tcp_clear_output(desc);

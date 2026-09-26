@@ -242,6 +242,10 @@
 -define(INET_STAT_SEND_PEND, 8).
 -define(INET_STAT_RECV_OCT,  9).
 -define(INET_STAT_SEND_OCT,  10).
+-define(INET_STAT_RECV_PKT_SIZE,  11).
+-define(INET_STAT_RECV_BUF_SIZE,  12).
+-define(INET_STAT_RECV_BUF_ALLOC, 13).
+-define(INET_STAT_RECV_BUF_PEND,  14).
 
 %% interface stuff, INET_IFOPT_FLAGS
 -define(INET_IFNAMSIZ,          16).
