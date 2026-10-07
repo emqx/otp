@@ -31,6 +31,7 @@
 -include_lib("kernel/include/file.hrl").
 -include_lib("public_key/include/public_key.hrl").
 -include("ssl_test_lib.hrl").
+-include_lib("ssl/src/ssl_internal.hrl").
 
 %% Callback functions
 -export([all/0,
@@ -69,6 +70,8 @@
          alternative_path_noabspath/1,
          alternative_path_symlink_relative/0,
          alternative_path_symlink_relative/1,
+         absolute_cacertfile_no_file_server/0,
+         absolute_cacertfile_no_file_server/1,
          cache_file_does_not_exist/0,
          cache_file_does_not_exist/1
         ]).
@@ -97,6 +100,7 @@ all() ->
      alternative_path_hardlink,
      alternative_path_symlink,
      alternative_path_symlink_relative,
+     absolute_cacertfile_no_file_server,
      cache_file_does_not_exist].
 
 groups() -> [].
@@ -397,17 +401,74 @@ alternative_path_hardlink(Config) when is_list(Config) ->
     alternative_path_helper(Config, fun make_hardlink/1, Expected).
 
 alternative_path_symlink() ->
-    [{doc,"Test that internal reference table contains only one instance of data "
-      "for absolute path and symbolic link pointing to same file."
+    [{doc,"Test that internal reference table contains separate instances of data "
+      "for absolute path and symbolic link with absolute path pointing to same file."
       "This test verifies handling of same file with an alternative reference."
-      "Symlink is expected to be converted to absolute file path - "
-      "as a result establishing 2nd connection should not add new data to tables."}].
+      "An absolute path is expected to be used as it is, without a symlink lookup - "
+      "as a result establishing 2nd connection should add new data to tables."}].
 %% see alternative_path_hardlink for detailed specification
 alternative_path_symlink(Config) when is_list(Config) ->
     Expected = #{init => [0, 0, 0, 0], connected1 => [6, 6, 2, 2],
-                 connected2 => [6, 6, 2, 2], connected3 => [7, 9, 3, 3],
-                 disconnected => [7, 0, 0, 0]},
+                 connected2 => [7, 9, 3, 3], connected3 => [8, 12, 4, 4],
+                 disconnected => [8, 0, 0, 0]},
     alternative_path_helper(Config, fun make_symlink/1, Expected).
+
+absolute_cacertfile_no_file_server() ->
+    [{doc,"Test that option handling uses an absolute cacertfile path as it is: "
+      "it does not call file:get_cwd/0 or file:read_link/1, "
+      "and it does not replace a symbolic link with its target. "
+      "A relative path still makes both calls."}].
+absolute_cacertfile_no_file_server(Config) when is_list(Config) ->
+    ClientOpts = ssl_test_lib:ssl_options(client_rsa_verify_opts, Config),
+    CACertFile = ssl_test_lib:ssl_options(cacertfile, ClientOpts),
+    absolute = filename:pathtype(CACertFile),
+    Link = CACertFile ++ "_abs_symlink",
+    _ = file:delete(Link),
+    case file:make_symlink(CACertFile, Link) of
+        ok ->
+            Traced = [{file, get_cwd, 0}, {file, read_link, 1}],
+            [1 = erlang:trace_pattern(MFA, true, [global]) || MFA <- Traced],
+            try
+                {_, [get_cwd, read_link]} = cacertfile_option_calls("cacerts.pem"),
+                Files = [CACertFile, Link, list_to_binary(Link)],
+                Expected = [{unicode:characters_to_binary(File), []} || File <- Files],
+                Expected = [cacertfile_option_calls(File) || File <- Files],
+                ok
+            after
+                [erlang:trace_pattern(MFA, false, [global]) || MFA <- Traced]
+            end;
+        Reason ->
+            {skip, Reason}
+    end.
+
+%% Handle the option in a traced process. Returns the stored cacertfile
+%% and the traced calls to the file module.
+cacertfile_option_calls(File) ->
+    Parent = self(),
+    Opts = [{cacertfile, File}, {verify, verify_peer}],
+    {Pid, MRef} =
+        spawn_monitor(
+          fun() ->
+                  receive go -> ok end,
+                  {ok, #config{ssl = #{cacertfile := Stored}}} =
+                      ssl_config:handle_options(Opts, client, "localhost"),
+                  Parent ! {stored, self(), Stored}
+          end),
+    1 = erlang:trace(Pid, true, [call]),
+    Pid ! go,
+    Stored = receive {stored, Pid, Stored0} -> Stored0 end,
+    receive {'DOWN', MRef, process, Pid, normal} -> ok end,
+    DeliveredRef = erlang:trace_delivered(Pid),
+    receive {trace_delivered, Pid, DeliveredRef} -> ok end,
+    {Stored, cacertfile_option_calls_collect(Pid, [])}.
+
+cacertfile_option_calls_collect(Pid, Acc) ->
+    receive
+        {trace, Pid, call, {file, Function, _Args}} ->
+            cacertfile_option_calls_collect(Pid, [Function | Acc])
+    after 0 ->
+            lists:reverse(Acc)
+    end.
 
 alternative_path_noabspath() ->
     [{doc,"Test that internal reference table contains only one instance of data "
