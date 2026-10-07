@@ -2055,7 +2055,18 @@ handle_supported_groups_option(Value) when is_list(Value) ->
         error:_ -> option_error(supported_groups, Value)
     end.
 
+%% An absolute path is used as it is, so that a handshake does not call
+%% the file server. Only a relative path is made absolute, and only then
+%% is a symbolic link replaced with its target.
 unambiguous_path(Value) ->
+    case filename:pathtype(Value) of
+        absolute ->
+            validate_filename(filename:join([filename:flatten(Value)]), cacertfile);
+        _ ->
+            unambiguous_relative_path(Value)
+    end.
+
+unambiguous_relative_path(Value) ->
     AbsName = filename:absname(Value),
     UP = case file:read_link(AbsName) of
              {ok, PathWithNoLink} ->
