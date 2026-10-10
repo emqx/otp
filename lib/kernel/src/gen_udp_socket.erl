@@ -2459,6 +2459,12 @@ getstat_what(D, C) ->
     getstat_what(inet:stats(), D, C).
 
 getstat_what([], _D, _C) -> [];
+getstat_what([Tag | What], D, C) when
+      Tag =:= recv_pkt_size;
+      Tag =:= recv_buf_pend;
+      Tag =:= recv_buf_size;
+      Tag =:= recv_buf_alloc ->
+    getstat_what(What, D, C);
 getstat_what([Tag | What], D, C) ->
     Val =
         case Tag of

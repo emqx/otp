@@ -61,6 +61,7 @@
          t_simple_local_sockaddr_in_connectx_init/1,
 
          non_block_send/1,
+         getstat_recv_sctp/1,
 
          default_options/1
         ]).
@@ -130,6 +131,7 @@ sockaddr_cases() ->
 misc_cases() ->
     [
      non_block_send,
+     getstat_recv_sctp,
      default_options
     ].
 
@@ -2952,6 +2954,17 @@ nbs_client_loop(_Parent, S, Assoc, NumWrites, NumBytes, Data, false) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% SCTP uses inet descriptors but must not access TCP receive-buffer fields.
+getstat_recv_sctp(_Config) ->
+    {ok, S} = gen_sctp:open(0, [{active, false}]),
+    {ok, []} =
+        inet:getstat(S, [recv_pkt_size, recv_buf_pend,
+                        recv_buf_size, recv_buf_alloc]),
+    {ok, [{recv_cnt, 0}, {recv_oct, 0}]} =
+        inet:getstat(S, [recv_pkt_size, recv_cnt, recv_buf_pend,
+                        recv_buf_size, recv_oct, recv_buf_alloc]),
+    ok.
 
 default_options(Config) when is_list(Config) ->
     Cond = fun() -> ok end,

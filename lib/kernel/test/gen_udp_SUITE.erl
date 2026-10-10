@@ -73,6 +73,8 @@
 	 socket_monitor2_manyc/1,
 	 otp_17492/1,
 
+     getstat_recv_udp/1,
+
          t_simple_local_sockaddr_in_send_recv/1,
          t_simple_link_local_sockaddr_in_send_recv/1,
          t_simple_local_sockaddr_in6_send_recv/1,
@@ -159,7 +161,8 @@ all_cases() ->
      otp_17492,
      {group, sockaddr},
      t_kernel_options,
-     {group, tickets}
+     {group, tickets},
+     getstat_recv_udp
     ].
 
 recv_and_send_opts_cases() ->
@@ -434,6 +437,17 @@ end_per_testcase(_Case, Config) ->
        "~n   Monitors: ~p", [erlang:nodes(), pi(links), pi(monitors)]),
     ok.
 
+
+%% UDP omits unsupported receive-buffer keys without losing supported counters.
+getstat_recv_udp(_Config) ->
+    {ok, U} = gen_udp:open(0, [{inet_backend, inet}]),
+    {ok, []} =
+        inet:getstat(U, [recv_pkt_size, recv_buf_pend,
+                        recv_buf_size, recv_buf_alloc]),
+    {ok, [{recv_cnt, 0}, {recv_oct, 0}]} =
+        inet:getstat(U, [recv_pkt_size, recv_cnt, recv_buf_pend,
+                        recv_buf_size, recv_oct, recv_buf_alloc]),
+    ok.
 
 %%-------------------------------------------------------------
 %% Send two packets to a closed port (on some systems this causes the socket
