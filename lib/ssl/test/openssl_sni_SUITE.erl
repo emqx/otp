@@ -226,9 +226,10 @@ sni_cross_ca_no_session_reuse(Config) when is_list(Config) ->
                 unrecognized
         end,
 
-    ServerOptions = [{verify, verify_none},
-                     {versions, [Version]},
-                     {sni_fun, SniFun} | SniBase],
+    ServerOptions = ssl_test_lib:ssl_options(
+                      [{verify, verify_none},
+                       {versions, [Version]},
+                       {sni_fun, SniFun} | SniBase], Config),
 
     SessFile = filename:join(PrivDir, "otp20445_low.sess"),
     file:delete(SessFile),

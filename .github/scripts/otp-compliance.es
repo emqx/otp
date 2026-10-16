@@ -2162,8 +2162,8 @@ test_file(#{sbom_file := SbomFile, ntia_checker := Verification}) ->
 
 test_ntia_checker(false, _SbomFile) -> ok;
 test_ntia_checker(true, SbomFile) ->
-    have_tool("ntia-checker"),
-    Cmd = "sbomcheck --comply ntia --file " ++ SbomFile,
+    have_tool("sbomcheck"),
+    Cmd = "sbomcheck --comply ntia " ++ SbomFile,
     io:format("~nRunning: NTIA Compliance Checker~n[~ts]~n", [Cmd]),
     _ = cmd(Cmd),
     io:format("OK~n"),

@@ -236,17 +236,20 @@ alarm1(_Config, SysUsage) ->
             ct:fail({sys_alarm, SysUsage, NewSysThreshold})
     end,
 
-    %% Reset the threshold to set/clear the alarm again
+    %% Reset the threshold and check the alarm against the latest collection.
+    %% Memory usage may have crossed the original threshold since the first one.
     ok = memsup:set_sysmem_high_watermark(SysThreshold),
     ok = force_collection(),
     ct:sleep({seconds,1}),
+    {CurrentTotal, CurrentAlloc, _} = memsup:get_memory_data(),
+    CurrentSysUsage = CurrentAlloc/CurrentTotal,
     case alarm_set(system_memory_high_watermark) of
-        {true, []} when SysP ->
+        {true, []} when CurrentSysUsage > SysThreshold ->
             ok;
-        false when not SysP ->
+        false when CurrentSysUsage =< SysThreshold ->
             ok;
         _ ->
-            ct:fail({sys_alarm, SysUsage, SysThreshold})
+            ct:fail({sys_alarm, CurrentSysUsage, SysThreshold})
     end,
 
     %% Check memory usage
@@ -384,17 +387,20 @@ alarm2(_Config, _SysUsage) ->
             ct:fail({sys_alarm, SysUsage, NewSysThreshold})
     end,
 
-    %% Reset the threshold to set/clear the alarm again
+    %% Reset the threshold and check the alarm against the latest collection.
+    %% Memory usage may have crossed the original threshold since the first one.
     ok = memsup:set_sysmem_high_watermark(SysThreshold),
     ok = force_collection(),
     ct:sleep({seconds,1}),
+    {CurrentTotal, CurrentAlloc, _} = memsup:get_memory_data(),
+    CurrentSysUsage = CurrentAlloc/CurrentTotal,
     case alarm_set(system_memory_high_watermark) of
-        {true, []} when SysP ->
+        {true, []} when CurrentSysUsage > SysThreshold ->
             ok;
-        false when not SysP ->
+        false when CurrentSysUsage =< SysThreshold ->
             ok;
         _ ->
-            ct:fail({sys_alarm, SysUsage, SysThreshold})
+            ct:fail({sys_alarm, CurrentSysUsage, SysThreshold})
     end,
 
     %% Reset memsup_system_only and restart memsup

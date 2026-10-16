@@ -187,6 +187,8 @@ spawn_link2(Config) when is_list(Config) ->
 	    check_proc_vals(true, normal, FA, 0, PV)
     end,
 
+    %% The child may still be linked after sending its result.
+    unlink(P),
     peer:stop(Peer),
     ok.
 
@@ -230,6 +232,8 @@ spawn_link4(Config) when is_list(Config) ->
 	    check_proc_vals(true, normal, FA, 0, PV)
     end,
 
+    %% The child may still be linked after sending its result.
+    unlink(P),
     peer:stop(Peer),
     ok.
 

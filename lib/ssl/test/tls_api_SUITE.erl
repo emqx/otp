@@ -548,7 +548,10 @@ tls_shutdown_both(Config) when is_list(Config) ->
     Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
 					{from, self()},
 			   {mfa, {?MODULE, tls_shutdown_both_result, [server]}},
-			   {options, [{active, false} | ServerOpts]}]),
+                           %% Keep the write end open if the peer closes before
+                           %% the local transport shutdown has completed.
+                           {options, [{exit_on_close, false},
+                                      {active, false} | ServerOpts]}]),
     Port  = ssl_test_lib:inet_port(Server),
     Client = ssl_test_lib:start_client([{node, ClientNode}, {port, Port},
 					{host, Hostname},

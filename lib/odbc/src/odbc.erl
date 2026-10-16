@@ -297,7 +297,7 @@ dealing with a known underlying database.
 """.
 -spec connect(ConnectionStr, Options) -> {ok, ConnectionReferense} |
           {error, Reason} when
-      ConnectionStr :: string(),
+      ConnectionStr :: string() | function(),
       Options :: [{auto_commit, on | off} |
                   {timeout, timeout()} |
                   {binary_strings, on | off} |
@@ -313,8 +313,8 @@ dealing with a known underlying database.
 %%              to a c-process that uses the ODBC API to open a connection
 %%              to the database. 
 %%-------------------------------------------------------------------------
-connect(ConnectionStr, Options) when is_list(ConnectionStr), is_list(Options) ->
     
+connect(ConnectionStr, Options) when (is_list(ConnectionStr) orelse is_function(ConnectionStr)) andalso is_list(Options) ->
     %% Spawn the erlang control process.
     try  supervisor:start_child(odbc_sup, [[{client, self()}]]) of
 	 {ok, Pid} ->
@@ -913,7 +913,7 @@ handle_call(_, _, State) ->
 %% Description: Sends requests to the port-program.
 %% Note: The order of the function clauses is significant.
 %%--------------------------------------------------------------------------
-handle_msg({connect, ODBCCmd, AutoCommitMode, SrollableCursors},
+handle_msg({connect, ODBCCmd0, AutoCommitMode, SrollableCursors},
 	   Timeout, State) ->
 
     [ListenSocketSup, ListenSocketOdbc] = State#state.listen_sockets,
@@ -935,7 +935,8 @@ handle_msg({connect, ODBCCmd, AutoCommitMode, SrollableCursors},
 	    case gen_tcp:accept(ListenSocketOdbc, port_timeout()) of
 		{ok, OdbcSocket} ->
 		    gen_tcp:close(ListenSocketOdbc),
-		    odbc_send(OdbcSocket, ODBCCmd), 
+                    ODBCCmd = unwrap_conn_str(ODBCCmd0),
+                    odbc_send(OdbcSocket, ODBCCmd),
 		    {noreply, NewState#state{odbc_socket = OdbcSocket,
 					     sup_socket = SupSocket}, 
 		     Timeout};
@@ -1225,14 +1226,14 @@ connect(ConnectionReferense, ConnectionStr, Options) ->
     MaxLongCol = connection_config(max_long_column_size, Options),
 
     ODBCCmd =
-        [?OPEN_CONNECTION, C_AutoCommitMode, C_TraceDriver,
+        {[?OPEN_CONNECTION, C_AutoCommitMode, C_TraceDriver,
          C_SrollableCursors, C_TupleRow, BinaryStrings, ExtendedErrors,
          16#FF, 1,
          (MaxLongCol bsr 24) band 16#ff,
          (MaxLongCol bsr 16) band 16#ff,
          (MaxLongCol bsr 8) band 16#ff,
-         MaxLongCol band 16#ff,
-         ConnectionStr],
+         MaxLongCol band 16#ff],
+         ConnectionStr},
 
     %% Send request, to open a database connection, to the control process.
     case call(ConnectionReferense,
@@ -1415,3 +1416,15 @@ string_terminate_value(null) ->
 
 port_timeout() ->
   application:get_env(?MODULE, port_timeout, ?ODBC_PORT_TIMEOUT).
+
+unwrap_conn_str({Cmd0, ConnStrWrapped}) ->
+    ConnStr = unwrap_secret(ConnStrWrapped),
+    [Cmd0, ConnStr];
+unwrap_conn_str(ODBCCmd) ->
+    %% Not wrapped.
+    ODBCCmd.
+
+unwrap_secret(Fn) when is_function(Fn, 0) ->
+    unwrap_secret(Fn());
+unwrap_secret(X) ->
+    X.
