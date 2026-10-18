@@ -40,6 +40,9 @@
 	 t_recv_timeout/1, t_recv_eof/1, t_recv_delim/1,
 	 t_shutdown_write/1, t_shutdown_both/1, t_shutdown_error/1,
 	 t_shutdown_async/1,
+	 t_send_async_basic/1, t_send_async_busy/1,
+	 t_send_async_send_timeout/1, t_send_async_send_timeout_close/1,
+	 t_send_async_port_death/1,
 	 t_fdopen/1, t_fdconnect/1, t_implicit_inet6/1,
 	 t_local_basic/1, t_local_unbound/1, t_local_fdopen/1,
 	 t_local_fdopen_listen/1, t_local_fdopen_listen_unbound/1,
@@ -93,6 +96,7 @@ groups() ->
      {t_connect,            [], t_connect_cases()},
      {t_recv,               [], t_recv_cases()},
      {t_shutdown,           [], t_shutdown_cases()},
+     {t_send_async,         [], t_send_async_cases()},
      {t_misc,               [], t_misc_cases()},
      {sockaddr,             [], sockaddr_cases()},
      {t_local,              [], t_local_cases()},
@@ -105,6 +109,7 @@ inet_backend_default_cases() ->
      {group, t_connect},
      {group, t_recv},
      {group, t_shutdown},
+     {group, t_send_async},
      {group, t_misc},
      {group, t_local}
     ].
@@ -140,6 +145,15 @@ t_shutdown_cases() ->
      t_shutdown_both,
      t_shutdown_error,
      t_shutdown_async
+    ].
+
+t_send_async_cases() ->
+    [
+     t_send_async_basic,
+     t_send_async_busy,
+     t_send_async_send_timeout,
+     t_send_async_send_timeout_close,
+     t_send_async_port_death
     ].
 
 t_misc_cases() ->
@@ -1823,6 +1837,161 @@ is_net_supported() ->
     catch
         error : notsup ->
             not_supported(net)
+    end.
+
+
+%%% gen_tcp:send_async/2,3
+
+%% The data reaches the peer and one ok reply arrives per accepted send.
+%% A socket of the socket backend returns {error, enotsup}.
+t_send_async_basic(Config) when is_list(Config) ->
+    {S, C} = send_async_pair(Config, [], []),
+    ok = gen_tcp:send_async(S, <<"hello">>),
+    ok = send_async_reply(S, 1000),
+    {ok, <<"hello">>} = gen_tcp:recv(C, 5, 1000),
+    ok = gen_tcp:send_async(S, [<<"ab">>, "cd", [<<"e">>]], [nosuspend]),
+    ok = send_async_reply(S, 1000),
+    {ok, <<"abcde">>} = gen_tcp:recv(C, 5, 1000),
+    ok = send_async_no_message(100),
+    ok = gen_tcp:close(S),
+    ok = gen_tcp:close(C).
+
+%% With nosuspend, a busy port returns {error, busy} and queues nothing.
+%% The reply of a send queued above the high watermark arrives when the
+%% queue drains below the low watermark.
+t_send_async_busy(Config) when is_list(Config) ->
+    {S, C} = send_async_pair(Config, send_async_small_queue(), [{recbuf, 4096}]),
+    Chunk = binary:copy(<<"x">>, 16384),
+    NSent = send_async_fill(S, Chunk),
+    NEarly = send_async_count_ok(S),
+    ?P("~w sends queued, ~w replies before drain", [NSent, NEarly]),
+    true = NEarly < NSent,
+    {error, busy} = gen_tcp:send_async(S, Chunk, [nosuspend]),
+    {ok, Data} = gen_tcp:recv(C, NSent * byte_size(Chunk), 10000),
+    true = byte_size(Data) =:= NSent * byte_size(Chunk),
+    [ok = send_async_reply(S, 5000) || _ <- lists:seq(1, NSent - NEarly)],
+    ok = send_async_no_message(100),
+    ok = gen_tcp:close(S),
+    ok = gen_tcp:close(C).
+
+%% A send_timeout in the driver arrives as an {error, timeout} reply.
+t_send_async_send_timeout(Config) when is_list(Config) ->
+    {S, C} = send_async_pair(Config,
+                             [{send_timeout, 200} | send_async_small_queue()],
+                             [{recbuf, 4096}]),
+    NSent = send_async_fill(S, binary:copy(<<"z">>, 16384)),
+    NEarly = send_async_count_ok(S),
+    true = NEarly < NSent,
+    Replies = [send_async_reply(S, 3000) || _ <- lists:seq(1, NSent - NEarly)],
+    ?P("replies after send_timeout: ~p", [Replies]),
+    true = lists:member({error, timeout}, Replies),
+    ok = gen_tcp:close(S),
+    ok = gen_tcp:close(C).
+
+%% After send_timeout_close closes the socket, the next send gets an
+%% error reply or {error, closed}.
+t_send_async_send_timeout_close(Config) when is_list(Config) ->
+    {S, C} = send_async_pair(Config,
+                             [{send_timeout, 200}, {send_timeout_close, true}
+                              | send_async_small_queue()],
+                             [{recbuf, 4096}]),
+    NSent = send_async_fill(S, binary:copy(<<"z">>, 16384)),
+    NEarly = send_async_count_ok(S),
+    true = NEarly < NSent,
+    {error, timeout} = send_async_reply(S, 3000),
+    send_async_flush(S),
+    case gen_tcp:send_async(S, <<"after">>) of
+        ok ->
+            {error, Reason} = send_async_reply(S, 3000),
+            ?P("send after send_timeout_close: ~p", [Reason]);
+        {error, closed} ->
+            ok
+    end,
+    _ = gen_tcp:close(S),
+    ok = gen_tcp:close(C).
+
+%% A port that dies with a pending reply sends no reply. The owner gets
+%% the exit signal of the port link.
+t_send_async_port_death(Config) when is_list(Config) ->
+    {S, C} = send_async_pair(Config, send_async_small_queue(), [{recbuf, 4096}]),
+    NSent = send_async_fill(S, binary:copy(<<"w">>, 16384)),
+    NEarly = send_async_count_ok(S),
+    true = NEarly < NSent,
+    OldTrap = process_flag(trap_exit, true),
+    exit(S, kill),
+    receive
+        {'EXIT', S, killed} -> ok
+    after 1000 ->
+            ct:fail(no_port_exit)
+    end,
+    process_flag(trap_exit, OldTrap),
+    ok = send_async_no_message(200),
+    ok = gen_tcp:close(C).
+
+send_async_small_queue() ->
+    [{high_watermark, 4096}, {low_watermark, 1024}, {sndbuf, 4096}].
+
+%% Return a connected {Server, Client} pair of passive sockets. Skip the
+%% test case for the socket backend after a check that send_async/2
+%% returns {error, enotsup} there.
+send_async_pair(Config, ServerOpts, ClientOpts) ->
+    Addr = {127, 0, 0, 1},
+    Opts = ?INET_BACKEND_OPTS(Config) ++ [binary, {active, false}, {ip, Addr}],
+    {ok, L} = gen_tcp:listen(0, Opts),
+    {ok, Port} = inet:port(L),
+    {ok, C} = gen_tcp:connect(Addr, Port, Opts ++ ClientOpts),
+    {ok, S} = gen_tcp:accept(L, 5000),
+    ok = gen_tcp:close(L),
+    case is_port(S) of
+        true ->
+            ok = inet:setopts(S, ServerOpts),
+            {S, C};
+        false ->
+            {error, enotsup} = gen_tcp:send_async(S, <<"x">>),
+            ok = gen_tcp:close(S),
+            ok = gen_tcp:close(C),
+            skip("inet-only testcase")
+    end.
+
+%% Send with nosuspend until the port is busy. Return the number of
+%% accepted sends.
+send_async_fill(S, Chunk) ->
+    send_async_fill(S, Chunk, 0, 1000).
+
+send_async_fill(_S, _Chunk, _N, 0) ->
+    ct:fail(port_never_busy);
+send_async_fill(S, Chunk, N, Left) ->
+    case gen_tcp:send_async(S, Chunk, [nosuspend]) of
+        ok -> send_async_fill(S, Chunk, N + 1, Left - 1);
+        {error, busy} -> N
+    end.
+
+send_async_reply(S, Timeout) ->
+    receive
+        {inet_reply, S, Status, send_async} -> Status
+    after Timeout ->
+            ct:fail(no_send_async_reply)
+    end.
+
+send_async_count_ok(S) ->
+    receive
+        {inet_reply, S, ok, send_async} -> 1 + send_async_count_ok(S)
+    after 0 ->
+            0
+    end.
+
+send_async_flush(S) ->
+    receive
+        {inet_reply, S, _, send_async} -> send_async_flush(S)
+    after 0 ->
+            ok
+    end.
+
+send_async_no_message(Timeout) ->
+    receive
+        M -> ct:fail({unexpected_message, M})
+    after Timeout ->
+            ok
     end.
 
 

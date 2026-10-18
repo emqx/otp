@@ -252,6 +252,7 @@ way, option `send_timeout` comes in handy.
          accept/1, accept/2,
 	 shutdown/2, close/1]).
 -export([send/2, recv/2, recv/3, unrecv/2]).
+-export([send_async/2, send_async/3]).
 -export([controlling_process/2]).
 -export([fdopen/2]).
 -export([ipv6_probe/0]).
@@ -995,6 +996,65 @@ send(S, Packet) when is_port(S) ->
 	    Mod:send(S, Packet);
 	Error ->
 	    Error
+    end.
+
+%% The caller header that the inet driver requires in front of the data
+%% since OTP 26 (see prim_inet:send/3): a 16-bit length and an
+%% external-term encoded tag, which the driver echoes as the last element
+%% of the reply. The tag must be a valid, non-empty term, else the driver
+%% drops the reply. This one is term_to_binary(send_async).
+-define(SEND_ASYNC_HDR, <<13:16, 131, 119, 10, "send_async">>).
+
+-doc """
+Send `Packet` on `Socket` and return without waiting for the driver.
+
+The result of the send arrives later as a message in the caller's mailbox,
+one message per `ok` return, in send order:
+
+- `{inet_reply, Socket, Status, send_async}` — `Status` is `ok` once the
+  driver has queued the data, or `{error, Reason}`. When the driver's queue
+  is above `high_watermark`, this reply is delayed until the queue drains
+  below `low_watermark`.
+
+A port that dies before it replies sends no reply. The owner is linked to
+the port and receives `{'EXIT', Socket, Reason}`, or `{tcp_closed, Socket}`
+in active mode.
+
+`Options`: `nosuspend` returns `{error, busy}` instead of suspending the
+caller when the port is busy; nothing is queued in that case. See
+`erlang:port_command/3`.
+
+Only sockets of the `inet` backend are supported; `{error, enotsup}` is
+returned for `inet_backend = socket`.
+""".
+-doc(#{since => <<"OTP 28.4.1-8 (EMQX)">>}).
+-spec send_async(Socket, Packet) -> ok | {error, Reason} when
+      Socket  :: socket(),
+      Packet  :: iodata(),
+      Reason  :: closed | enotsup | inet:posix().
+
+send_async(S, Packet) ->
+    send_async(S, Packet, []).
+
+-doc(#{since => <<"OTP 28.4.1-8 (EMQX)">>}).
+-spec send_async(Socket, Packet, Options) -> ok | {error, Reason} when
+      Socket  :: socket(),
+      Packet  :: iodata(),
+      Options :: [nosuspend | force],
+      Reason  :: busy | closed | enotsup | inet:posix().
+
+send_async(?module_socket(_, _), _Packet, _Options) ->
+    {error, enotsup};
+send_async(S, Packet, Options) when is_port(S), is_list(Options) ->
+    try erlang:port_command(S, [?SEND_ASYNC_HDR | Packet], Options) of
+        true ->
+            ok;
+        false ->
+            %% Port busy and `nosuspend' was given; nothing was queued.
+            {error, busy}
+    catch
+        error:_ ->
+            {error, closed}
     end.
 
 %%
