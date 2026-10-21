@@ -1840,16 +1840,15 @@ is_net_supported() ->
     end.
 
 
-%%% gen_tcp:send_async/2,3
+%%% prim_inet:send_async/2,3 (EMQX)
 
 %% The data reaches the peer and one ok reply arrives per accepted send.
-%% A socket of the socket backend returns {error, enotsup}.
 t_send_async_basic(Config) when is_list(Config) ->
     {S, C} = send_async_pair(Config, [], []),
-    ok = gen_tcp:send_async(S, <<"hello">>),
+    ok = prim_inet:send_async(S, <<"hello">>),
     ok = send_async_reply(S, 1000),
     {ok, <<"hello">>} = gen_tcp:recv(C, 5, 1000),
-    ok = gen_tcp:send_async(S, [<<"ab">>, "cd", [<<"e">>]], [nosuspend]),
+    ok = prim_inet:send_async(S, [<<"ab">>, "cd", [<<"e">>]], [nosuspend]),
     ok = send_async_reply(S, 1000),
     {ok, <<"abcde">>} = gen_tcp:recv(C, 5, 1000),
     ok = send_async_no_message(100),
@@ -1866,7 +1865,7 @@ t_send_async_busy(Config) when is_list(Config) ->
     NEarly = send_async_count_ok(S),
     ?P("~w sends queued, ~w replies before drain", [NSent, NEarly]),
     true = NEarly < NSent,
-    {error, busy} = gen_tcp:send_async(S, Chunk, [nosuspend]),
+    {error, busy} = prim_inet:send_async(S, Chunk, [nosuspend]),
     {ok, Data} = gen_tcp:recv(C, NSent * byte_size(Chunk), 10000),
     true = byte_size(Data) =:= NSent * byte_size(Chunk),
     [ok = send_async_reply(S, 5000) || _ <- lists:seq(1, NSent - NEarly)],
@@ -1900,7 +1899,7 @@ t_send_async_send_timeout_close(Config) when is_list(Config) ->
     true = NEarly < NSent,
     {error, timeout} = send_async_reply(S, 3000),
     send_async_flush(S),
-    case gen_tcp:send_async(S, <<"after">>) of
+    case prim_inet:send_async(S, <<"after">>) of
         ok ->
             {error, Reason} = send_async_reply(S, 3000),
             ?P("send after send_timeout_close: ~p", [Reason]);
@@ -1932,8 +1931,7 @@ send_async_small_queue() ->
     [{high_watermark, 4096}, {low_watermark, 1024}, {sndbuf, 4096}].
 
 %% Return a connected {Server, Client} pair of passive sockets. Skip the
-%% test case for the socket backend after a check that send_async/2
-%% returns {error, enotsup} there.
+%% test case for the socket backend, which has no port.
 send_async_pair(Config, ServerOpts, ClientOpts) ->
     Addr = {127, 0, 0, 1},
     Opts = ?INET_BACKEND_OPTS(Config) ++ [binary, {active, false}, {ip, Addr}],
@@ -1947,7 +1945,6 @@ send_async_pair(Config, ServerOpts, ClientOpts) ->
             ok = inet:setopts(S, ServerOpts),
             {S, C};
         false ->
-            {error, enotsup} = gen_tcp:send_async(S, <<"x">>),
             ok = gen_tcp:close(S),
             ok = gen_tcp:close(C),
             skip("inet-only testcase")
@@ -1961,7 +1958,7 @@ send_async_fill(S, Chunk) ->
 send_async_fill(_S, _Chunk, _N, 0) ->
     ct:fail(port_never_busy);
 send_async_fill(S, Chunk, N, Left) ->
-    case gen_tcp:send_async(S, Chunk, [nosuspend]) of
+    case prim_inet:send_async(S, Chunk, [nosuspend]) of
         ok -> send_async_fill(S, Chunk, N + 1, Left - 1);
         {error, busy} -> N
     end.

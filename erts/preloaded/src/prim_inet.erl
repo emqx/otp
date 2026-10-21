@@ -35,6 +35,7 @@
 -export([accept/1, accept/2, accept/3, async_accept/2]).
 -export([shutdown/2]).
 -export([send/2, send/3, sendto/4, sendmsg/3, sendfile/4]).
+-export([send_async/2, send_async/3]).
 -export([recv/2, recv/3, async_recv/3]).
 -export([unrecv/2]).
 -export([recvfrom/2, recvfrom/3]).
@@ -624,6 +625,48 @@ send(S, HdrAndData, OptList, Mref) ->
 	    ?DBG_FORMAT("prim_inet:send() -> {error,einval}~n", []),
             demonitor(Mref, [flush]),
             {error,einval}
+    end.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%% SEND_ASYNC(insock(), Data, OptList) -> ok | {error, busy | closed}
+%%
+%% EMQX extension: send Data on a TCP socket and return without waiting
+%% for the driver.
+%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% The result of each `ok' return arrives later as a message to the caller,
+%% in send order:
+%%
+%%   {inet_reply, S, ok | {error, Reason}, send_async}
+%%
+%% The reply is `ok' once the driver has queued the data. When the driver
+%% queue is above high_watermark, the reply is delayed until the queue
+%% drains below low_watermark. A port that dies before it replies sends no
+%% reply; the owner gets the exit signal of the port link instead.
+%%
+%% OptList is passed to erlang:port_command/3. With `nosuspend' and a busy
+%% port the function returns {error, busy} and queues nothing.
+%%
+%% The data starts with the caller header that send/3 also uses: a 16-bit
+%% length and an external-term encoded tag, which the driver echoes as the
+%% last element of the reply. The tag must be a valid, non-empty term, else
+%% the driver drops the reply. This one is term_to_binary(send_async).
+%%
+-define(SEND_ASYNC_HDR, <<13:16, 131, 119, 10, "send_async">>).
+
+-spec send_async(port(), iodata()) -> ok | {error, busy | closed}.
+send_async(S, Data) ->
+    send_async(S, Data, []).
+
+-spec send_async(port(), iodata(), [nosuspend | force]) ->
+          ok | {error, busy | closed}.
+send_async(S, Data, OptList) when is_port(S), is_list(OptList) ->
+    try erlang:port_command(S, [?SEND_ASYNC_HDR | Data], OptList) of
+        true -> ok;
+        false -> {error, busy} % Port busy and nosuspend; nothing queued
+    catch error: _ ->
+            {error, closed}
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
