@@ -82,6 +82,8 @@
 #define ESOCK_DESC_PATTERN_CREATED 0x03030303
 #define ESOCK_DESC_PATTERN_DTOR    0xC0C0C0C0
 
+#define ESOCK_RECV_BUFFER_NOKEEP   0
+
 
 /* ==========================================================================
  * The ESOCK_IS_ERROR macro below is used for portability reasons.
@@ -491,10 +493,10 @@ typedef struct {
     size_t             rBufSz;  // Read buffer size (when data length = 0)
     /* rNum and rNumCnt are used (together with rBufSz) when calling the recv 
      * function with the Length argument set to 0 (zero).
-     * If rNum is 0 (zero), then rNumCnt is not used and only *one* read will
-     * be done. Also, when get'ing the value of the option (rcvbuf) with 
-     * getopt, the value will be reported as an integer. If the rNum has a 
-     * value greater then 0 (zero), then it will instead be reported as
+     * If rNum is 0 (zero), the value is reported as {false, BufSz}, and the
+     * buffer is released when a receive with length 0 would block.  If rNum
+     * is 1, only one read will be done and the value is reported as an
+     * integer.  If rNum is greater than 1, the value is reported as
      * {N, BufSz}.
      * On Windows, rNum and rNumCnt is *not* used!
      */

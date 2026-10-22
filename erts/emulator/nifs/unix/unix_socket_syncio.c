@@ -119,6 +119,9 @@
 /* Global socket debug */
 #define SGDBG( proto )            ESOCK_DBG_PRINTF( ctrl.dbg , proto )
 
+#define ESOCK_WOULDBLOCK(err) \
+    (((err) == ERRNO_BLOCK) || ((err) == EAGAIN))
+
 
 /* =================================================================== *
  *                                                                     *
@@ -1555,8 +1558,7 @@ ERL_NIF_TERM essio_accept_listening_error(ErlNifEnv*       env,
 {
     ERL_NIF_TERM res;
 
-    if (save_errno == ERRNO_BLOCK ||
-        save_errno == EAGAIN) {
+    if (ESOCK_WOULDBLOCK(save_errno)) {
 
         /* *** Try again later *** */
 
@@ -1724,8 +1726,7 @@ ERL_NIF_TERM essio_accept_accepting_current_error(ErlNifEnv*       env,
 {
     ERL_NIF_TERM res, reason;
 
-    if (save_errno == ERRNO_BLOCK ||
-        save_errno == EAGAIN) {
+    if (ESOCK_WOULDBLOCK(save_errno)) {
 
         /*
          * Just try again, no real error, just a ghost trigger from poll,
@@ -2772,7 +2773,11 @@ ERL_NIF_TERM essio_recv(ErlNifEnv*       env,
     /* Check for errors and end of stream */
     if (! recv_check_result(env, descP, sockRef, recvRef,
                             readResult, saveErrno, &ret) ) {
-        /* Keep the buffer */
+        if ((descP->rNum == ESOCK_RECV_BUFFER_NOKEEP) && (len == 0) &&
+            ESOCK_WOULDBLOCK(saveErrno)) {
+            FREE_BIN(bufP);
+            bufP->data = NULL;
+        }
         return ret;
     }
     /* readResult >= 0 */
@@ -2860,7 +2865,11 @@ ERL_NIF_TERM essio_recvfrom(ErlNifEnv*       env,
     /* Check for errors and end of stream */
     if (! recv_check_result(env, descP, sockRef, recvRef,
                             readResult, saveErrno, &ret) ) {
-        /* Keep the buffer */
+        if ((descP->rNum == ESOCK_RECV_BUFFER_NOKEEP) && (len == 0) &&
+            ESOCK_WOULDBLOCK(saveErrno)) {
+            FREE_BIN(bufP);
+            bufP->data = NULL;
+        }
         return ret;
     }
     /* readResult >= 0 */
@@ -2981,7 +2990,11 @@ ERL_NIF_TERM essio_recvmsg(ErlNifEnv*       env,
     /* Check for errors and end of stream */
     if (! recv_check_result(env, descP, sockRef, recvRef,
                             readResult, saveErrno, &ret) ) {
-        /* Keep the data buffer */
+        if ((descP->rNum == ESOCK_RECV_BUFFER_NOKEEP) && (bufLen == 0) &&
+            ESOCK_WOULDBLOCK(saveErrno)) {
+            FREE_BIN(bufP);
+            bufP->data = NULL;
+        }
         FREE_BIN(&ctrl);
         return ret;
     }
@@ -7195,8 +7208,7 @@ ERL_NIF_TERM recv_check_fail(ErlNifEnv*       env,
         /* Res = {error, econnreset} */
         res = recv_check_fail_econnreset(env, descP, sockRef);
 
-    } else if ((saveErrno == ERRNO_BLOCK) ||
-               (saveErrno == EAGAIN)) {
+    } else if (ESOCK_WOULDBLOCK(saveErrno)) {
 
         SSDBG( descP,
                ("UNIX-ESSIO",

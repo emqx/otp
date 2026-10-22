@@ -888,13 +888,16 @@ hence above all OS protocol levels.
   controlling process can set this option.
 
 - **`rcvbuf`** -
-  `BufSize :: (default | integer()>0) | {N :: integer()>0, BufSize :: (default | integer()>0)} `\-
+  `BufSize :: (default | integer()>0) | {_Keep :: false | N :: integer()>0, BufSize :: (default | integer()>0)} `\-
   Receive buffer size.
 
   The value `default` is only valid to _set_.
 
   `N` specifies the number of read attempts to do in a tight loop before
-  assuming no more data is pending.
+  assuming no more data is pending.  The value `false` disables retaining
+  the receive buffer when a receive with size 0 would block.  The buffer is
+  allocated again when the receive operation is retried. Using `{1,BufSize}`
+  is equivalent to `BufSize`.
 
   This is the allocation size for the receive buffer used when calling the OS
   protocol stack's receive API, when no specific size (size 0) is requested.
@@ -5106,6 +5109,8 @@ On a `select` system, when the default receive buffer size option
 is used, `N` limits how many `BufSize` buffers that may be received
 in a tight loop before the receive operation returns.  The option value
 `{1,BufSize}` is equivalent to just specifying a size value `BufSize`.
+The special value `{false,BufSize}` disables retaining the receive buffer
+when a receive with size 0 would block.
 
 The message `Flags` may be symbolic `t:msg_flag/0`s and/or
 `t:integer/0`s as in the platform's appropriate header files.
