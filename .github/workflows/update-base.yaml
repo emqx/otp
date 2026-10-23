@@ -36,7 +36,13 @@ jobs:
   build:
     name: Update base Erlang/OTP build images
     if: github.repository == 'erlang/otp'
-    runs-on: ubuntu-latest
+    ## i386-debian-base builds inside an i386/debian container. On
+    ## ubuntu-26.04 the preinstalled Docker's default seccomp profile
+    ## blocks the socketcall syscall that 32-bit glibc needs for sockets,
+    ## breaking name resolution inside the container
+    ## (https://github.com/actions/runner-images/issues/14790).
+    ## Pin only that type to ubuntu-24.04 until a fixed Docker lands.
+    runs-on: ${{ matrix.type == 'i386-debian-base' && 'ubuntu-24.04' || 'ubuntu-latest' }}
 
     permissions:
       packages: write
@@ -49,14 +55,14 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ matrix.branch }}
       - name: Cleanup GH Runner
         shell: bash
         run: .github/scripts/cleanup_gh_runner.sh
       - name: Docker login
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
