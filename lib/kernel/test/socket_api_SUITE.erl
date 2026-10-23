@@ -201,6 +201,8 @@
          api_opt_simple_otp_meta_option/1,
          api_opt_simple_otp_rcvbuf_option/1,
          api_opt_otp_rcvbuf_nokeep/1,
+         api_opt_otp_rcvbuf_nokeep_select_read/1,
+         api_opt_otp_rcvbuf_nokeep_select_read_dgram/1,
          api_opt_simple_otp_controlling_process/1,
          api_opt_sock_acceptconn_udp/1,
          api_opt_sock_acceptconn_tcp/1,
@@ -510,6 +512,8 @@ api_options_otp_cases() ->
      api_opt_simple_otp_meta_option,
      api_opt_simple_otp_rcvbuf_option,
      api_opt_otp_rcvbuf_nokeep,
+     api_opt_otp_rcvbuf_nokeep_select_read,
+     api_opt_otp_rcvbuf_nokeep_select_read_dgram,
      api_opt_simple_otp_controlling_process
     ].
 
@@ -12005,8 +12009,7 @@ api_opt_simple_otp_rcvbuf_option() ->
     ok = ?SEV_AWAIT_FINISH([Server, Client, Tester]).
 
 
-%% Verify that the no-keep rcvbuf mode only releases the receive buffer when
-%% a zero-length receive would block.
+%% Verify no-keep buffer release when a zero-length receive would block.
 api_opt_otp_rcvbuf_nokeep(Config) when is_list(Config) ->
     ?TT(?SECS(15)),
     tc_try(?FUNCTION_NAME,
@@ -12045,7 +12048,137 @@ api_opt_otp_rcvbuf_nokeep() ->
     ok = socket:cancel(Sock, ReleaseSelectInfo).
 
 
+%% Verify no-keep release on completed select_read, while retaining buffers
+%% for incomplete reads.
+api_opt_otp_rcvbuf_nokeep_select_read(Config) when is_list(Config) ->
+    ?TT(?SECS(15)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> is_not_windows() end,
+           fun() -> api_opt_otp_rcvbuf_nokeep_select_read() end).
+
+api_opt_otp_rcvbuf_nokeep_select_read() ->
+    Domain = inet_or_inet6(),
+    LSock = sock_open(Domain, stream, tcp),
+    ok = sock_bind(LSock, which_local_socket_addr(Domain)),
+    ok = socket:listen(LSock),
+    ServerSA = sock_sockname(LSock),
+    ClientSock = sock_open(Domain, stream, tcp),
+    ok = sock_connect(ClientSock, ServerSA),
+    {ok, Sock} = socket:accept(LSock),
+
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
+    NBufAllocs1 = NBufAllocs0 + 1,
+    NoKeepRcvBuf = {false, 4096},
+    ok = socket:setopt(Sock, otp, select_read, true),
+    Data = <<"12345678">>,
+
+    %% Keep mode retains the scratch buffer after a completed read.
+    ok = socket:setopt(Sock, otp, rcvbuf, 4096),
+    {select, InitialInfo} = socket:recv(Sock, 0, nowait),
+    ok = socket:send(ClientSock, Data),
+    await_rcvbuf_select(Sock, InitialInfo),
+    {select_read, {KeepInfo, Data}} = socket:recv(Sock, 0, nowait),
+    NBufAllocs1 = binary_alloc_count(prim_socket, drv_binary),
+
+    %% Switching to no-keep releases that buffer on the next success.
+    ok = socket:setopt(Sock, otp, rcvbuf, NoKeepRcvBuf),
+    ok = socket:send(ClientSock, Data),
+    await_rcvbuf_select(Sock, KeepInfo),
+    {select_read, {NoKeepInfo, Data}} = socket:recv(Sock, 0, nowait),
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
+
+    %% An incomplete explicit-length read still retains its buffer.
+    ok = socket:send(ClientSock, Data),
+    await_rcvbuf_select(Sock, NoKeepInfo),
+    {select, {PartialInfo, Data}} = socket:recv(Sock, 4096, nowait),
+    NBufAllocs1 = binary_alloc_count(prim_socket, drv_binary),
+
+    %% A completed length-zero retry releases the retained buffer.
+    ok = socket:send(ClientSock, Data),
+    await_rcvbuf_select(Sock, PartialInfo),
+    {select_read, {_RetryInfo, Data}} = socket:recv(Sock, 0, nowait),
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary).
+
+
+api_opt_otp_rcvbuf_nokeep_select_read_dgram(Config) when is_list(Config) ->
+    ?TT(?SECS(15)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> is_not_windows() end,
+           fun() -> api_opt_otp_rcvbuf_nokeep_select_read_dgram() end).
+
+api_opt_otp_rcvbuf_nokeep_select_read_dgram() ->
+    Domain = inet_or_inet6(),
+    Sock = sock_open(Domain, dgram, udp),
+    Sender = sock_open(Domain, dgram, udp),
+    ok = sock_bind(Sock, which_local_socket_addr(Domain)),
+    Addr = sock_sockname(Sock),
+    Data = <<"12345678">>,
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
+    NBufAllocs1 = NBufAllocs0 + 1,
+    ok = socket:setopt(Sock, otp, select_read, true),
+    ok = socket:setopt(Sock, otp, rcvbuf, 4096),
+
+    %% Both datagram APIs retain the scratch buffer in keep mode.
+    {select, InitialInfo} = socket:recvfrom(Sock, 0, nowait),
+    ok = socket:sendto(Sender, Data, Addr),
+    await_rcvbuf_select(Sock, InitialInfo),
+    {select_read, {KeepFromInfo, {_, Data}}} =
+        socket:recvfrom(Sock, 0, nowait),
+    erlang:garbage_collect(),
+    NBufAllocs1 = binary_alloc_count(prim_socket, drv_binary),
+
+    ok = socket:sendto(Sender, Data, Addr),
+    await_rcvbuf_select(Sock, KeepFromInfo),
+    {select_read, {KeepMsgInfo, #{iov := [Data]}}} =
+        socket:recvmsg(Sock, 0, 0, nowait),
+    erlang:garbage_collect(),
+    NBufAllocs1 = binary_alloc_count(prim_socket, drv_binary),
+
+    %% No-keep releases it after either API completes a read.
+    ok = socket:setopt(Sock, otp, rcvbuf, {false, 4096}),
+    ok = socket:sendto(Sender, Data, Addr),
+    await_rcvbuf_select(Sock, KeepMsgInfo),
+    {select_read, {FromInfo, {_, Data}}} =
+        socket:recvfrom(Sock, 0, nowait),
+    erlang:garbage_collect(),
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
+
+    ok = socket:sendto(Sender, Data, Addr),
+    await_rcvbuf_select(Sock, FromInfo),
+    {select_read, {MsgInfo, #{iov := [Data]}}} =
+        socket:recvmsg(Sock, 0, 0, nowait),
+    erlang:garbage_collect(),
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
+
+    %% Explicit buffer sizes follow the same release policy.
+    ok = socket:sendto(Sender, Data, Addr),
+    await_rcvbuf_select(Sock, MsgInfo),
+    {select_read, {ExplicitFromInfo, {_, Data}}} =
+        socket:recvfrom(Sock, 4096, nowait),
+    erlang:garbage_collect(),
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
+
+    ok = socket:sendto(Sender, Data, Addr),
+    await_rcvbuf_select(Sock, ExplicitFromInfo),
+    {select_read, {_ExplicitMsgInfo, #{iov := [Data]}}} =
+        socket:recvmsg(Sock, 4096, 0, nowait),
+    erlang:garbage_collect(),
+    NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary).
+
+
+await_rcvbuf_select(Sock, {select_info, _, Ref}) ->
+    receive
+        {'$socket', Sock, select, Ref} -> ok
+    after 5000 ->
+            ct:fail(select_timeout)
+    end.
+
+
 binary_alloc_count(Origin, Type) ->
+    %% NOTE
+    %% Small returned binaries leave a temporary native BinRef until GC.
+    %% Collect first so these do not affect the scratch-buffer allocation count.
+    erlang:garbage_collect(),
     {ok, {_, 0, Allocations}} =
         instrument:allocations(#{allocator_types => [binary_alloc]}),
     OriginAllocations = maps:get(Origin, Allocations, #{}),

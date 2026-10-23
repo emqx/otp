@@ -895,8 +895,9 @@ hence above all OS protocol levels.
 
   `N` specifies the number of read attempts to do in a tight loop before
   assuming no more data is pending.  The value `false` disables retaining
-  the receive buffer when a receive with size 0 would block.  The buffer is
-  allocated again when the receive operation is retried. Using `{1,BufSize}`
+  the receive buffer when a receive with size 0 would block, or when a receive
+  fully completes under `select_read` reginme. The buffer is allocated again
+  when the receive operation is retried. Using `{1,BufSize}`
   is equivalent to `BufSize`.
 
   This is the allocation size for the receive buffer used when calling the OS
@@ -5110,7 +5111,8 @@ is used, `N` limits how many `BufSize` buffers that may be received
 in a tight loop before the receive operation returns.  The option value
 `{1,BufSize}` is equivalent to just specifying a size value `BufSize`.
 The special value `{false,BufSize}` disables retaining the receive buffer
-when a receive with size 0 would block.
+when a receive with size 0 would block, or when a receive fully completes
+under `select_read` regime.
 
 The message `Flags` may be symbolic `t:msg_flag/0`s and/or
 `t:integer/0`s as in the platform's appropriate header files.
