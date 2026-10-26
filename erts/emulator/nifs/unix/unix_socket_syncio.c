@@ -373,6 +373,11 @@ static ERL_NIF_TERM recv_check_fail_gen(ErlNifEnv*       env,
 static ERL_NIF_TERM recv_check_fail_econnreset(ErlNifEnv*       env,
                                                ESockDescriptor* descP,
                                                ERL_NIF_TERM     sockRef);
+static ERL_NIF_TERM recv_check_select_read(ErlNifEnv*       env,
+                                           ESockDescriptor* descP,
+                                           ERL_NIF_TERM     sockRef,
+                                           ERL_NIF_TERM     recvRef,
+                                           ERL_NIF_TERM     msg);
 static ERL_NIF_TERM recv_check_select(ErlNifEnv*       env,
                                       ESockDescriptor* descP,
                                       ERL_NIF_TERM     sockRef,
@@ -2906,7 +2911,7 @@ ERL_NIF_TERM essio_recvfrom(ErlNifEnv*       env,
     if (descP->selectRead && (COMPARE(recvRef, esock_atom_zero) != 0)) {
         /* Return {select_read, {FromAddr, Bin}} */
         ret = MKT2(env, esock_atom_select_read, ret);
-        return recv_check_select(env, descP, sockRef, recvRef, ret);
+        return recv_check_select_read(env, descP, sockRef, recvRef, ret);
     }
     else {
         recv_update_current_reader(env, descP, sockRef);
@@ -3038,7 +3043,7 @@ ERL_NIF_TERM essio_recvmsg(ErlNifEnv*       env,
     if (descP->selectRead && (COMPARE(recvRef, esock_atom_zero) != 0)) {
         /* Return {select_read, Msg} */
         ret = MKT2(env, esock_atom_select_read, ret);
-        return recv_check_select(env, descP, sockRef, recvRef, ret);
+        return recv_check_select_read(env, descP, sockRef, recvRef, ret);
     }
     else {
         recv_update_current_reader(env, descP, sockRef);
@@ -7161,7 +7166,7 @@ ERL_NIF_TERM recv_check_full_done(ErlNifEnv*       env,
     if (descP->selectRead && (COMPARE(recvRef, esock_atom_zero) != 0)) {
         /* {select_read, Bin} */
         res = MKT2(env, esock_atom_select_read, res);
-        return recv_check_select(env, descP, sockRef, recvRef, res);
+        return recv_check_select_read(env, descP, sockRef, recvRef, res);
     }
     else {
         recv_update_current_reader(env, descP, sockRef);
@@ -7435,7 +7440,7 @@ ERL_NIF_TERM recv_check_partial(ErlNifEnv*       env,
         if (descP->selectRead && (COMPARE(recvRef, esock_atom_zero) != 0)) {
             /* Res = {select_read, Bin} */
             res = MKT2(env, esock_atom_select_read, res);
-            res = recv_check_select(env, descP, sockRef, recvRef, res);
+            res = recv_check_select_read(env, descP, sockRef, recvRef, res);
         }
         else {
             /* Res = {ok, Bin} */
@@ -7445,6 +7450,27 @@ ERL_NIF_TERM recv_check_partial(ErlNifEnv*       env,
     }
 
     return res;
+}
+
+
+/* A completed read has already transferred or copied the received data
+ * to the return value. No-keep mode can release any remaining scratch
+ * buffer before waiting for the next read.
+ */
+static
+ERL_NIF_TERM recv_check_select_read(ErlNifEnv*       env,
+                                    ESockDescriptor* descP,
+                                    ERL_NIF_TERM     sockRef,
+                                    ERL_NIF_TERM     recvRef,
+                                    ERL_NIF_TERM     msg)
+{
+    if ((descP->rNum == ESOCK_RECV_BUFFER_NOKEEP) &&
+        (descP->buf.data != NULL)) {
+        FREE_BIN(&descP->buf);
+        descP->buf.data = NULL;
+    }
+
+    return recv_check_select(env, descP, sockRef, recvRef, msg);
 }
 
 
