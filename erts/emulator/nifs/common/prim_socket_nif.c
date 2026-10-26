@@ -7135,7 +7135,8 @@ ERL_NIF_TERM esock_setopt_otp_rcvbuf(ErlNifEnv*       env,
 #ifndef __WIN32__
     descP->rNum = n;
     /* Setting nokeep mode does not release an existing buffer here;
-     * release only happens when a size 0 receive would block.
+     * release happens when a size 0 receive would block or a completed
+     * receive returns select_read.
      */
 #endif
     if (bufSz < ESOCK_RECV_BUFFER_SIZE_MIN)
