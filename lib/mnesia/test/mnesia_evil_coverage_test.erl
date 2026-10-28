@@ -335,16 +335,15 @@ db_node_lifecycle(Config) when is_list(Config) ->
 
     [?match({atomic, ok}, mnesia:create_table(T)) || T <- Tabs ],
 
-    ?match({aborted, {active, _, Node2}}, 
-	   mnesia:del_table_copy(schema, Node2)),
+    %% The schema copy of a node may be deleted while
+    %% mnesia is still running on that node
+    ?match({atomic, ok}, mnesia:del_table_copy(schema, Node2)),
 
     ?match([], mnesia_test_lib:stop_mnesia([Node1])),
     ?match({aborted, {node_not_running, Node1}}, 
-	   mnesia:del_table_copy(schema, Node2)),
+	   mnesia:del_table_copy(schema, Node3)),
 
     ?match([], mnesia_test_lib:start_mnesia([Node1],[Tab2,Tab4,Tab6])),
-    ?match([], mnesia_test_lib:stop_mnesia([Node2])),
-    ?match({atomic, ok}, mnesia:del_table_copy(schema, Node2)),
 
     %% Check
     RemNodes = AllNodes -- [Node2],

@@ -73,7 +73,7 @@
 	 db_prev_key/3,
 	 db_put/2,
 	 db_put/3,
-	 db_select/2,	 
+	 db_select/2,
 	 db_select/3,
 	 db_select_init/4,
 	 db_select_cont/3,
@@ -193,7 +193,7 @@ key_search_delete(Key, Pos, [H|T], Obj, Ack) ->
 key_search_delete(_, _, [], Obj, Ack) ->
     {Obj, Ack}.
 
-key_search_all(Key, Pos, TupleList) -> 
+key_search_all(Key, Pos, TupleList) ->
     key_search_all(Key, Pos, TupleList, []).
 key_search_all(Key, N, [H|T], Ack) when element(N, H) == Key ->
     key_search_all(Key, N, T, [H|Ack]);
