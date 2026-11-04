@@ -57,7 +57,6 @@ MODULES= \
 	mnesia_ext_sup \
 	mnesia_frag \
 	mnesia_frag_hash \
-	mnesia_hook \
 	mnesia_index \
 	mnesia_kernel_sup \
 	mnesia_late_loader \
@@ -75,7 +74,9 @@ MODULES= \
 	mnesia_sup \
 	mnesia_sp  \
 	mnesia_text \
-	mnesia_tm
+	mnesia_tm \
+	mnesia_hook \
+	mnesia_net_kernel
 
 HRL_FILES= mnesia.hrl
 

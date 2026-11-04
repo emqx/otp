@@ -40,7 +40,8 @@
 	     mnesia_sup,
 	     mnesia_sp,
 	     mnesia_text,
-	     mnesia_tm
+	     mnesia_tm,
+	     mnesia_net_kernel
             ]},
   {registered, [
 		mnesia_dumper_load_regulator,

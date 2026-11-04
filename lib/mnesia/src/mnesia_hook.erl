@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright EMQ Technologies Co., Ltd 2023-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -43,15 +43,16 @@
 
 -type post_commit_hook() :: fun((_Tid, post_commit_hook_data()) -> ok).
 
--spec register_hook(post_commit, post_commit_hook()) -> ok | {error, term()}.
+-spec register_hook(post_commit, post_commit_hook()) -> ok | {error, bad_type}.
 register_hook(post_commit, Hook) when is_function(Hook, 2) ->
     persistent_term:put(?hook(post_commit), Hook);
 register_hook(_, _) ->
     {error, bad_type}.
 
--spec unregister_hook(post_commit) -> boolean() | {error, term()}.
+-spec unregister_hook(post_commit) -> ok | {error, bad_type}.
 unregister_hook(post_commit) ->
-    persistent_term:erase(?hook(post_commit));
+    _ = persistent_term:erase(?hook(post_commit)),
+    ok;
 unregister_hook(_) ->
     {error, bad_type}.
 
