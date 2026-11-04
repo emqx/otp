@@ -12124,14 +12124,12 @@ api_opt_otp_rcvbuf_nokeep_select_read_dgram() ->
     await_rcvbuf_select(Sock, InitialInfo),
     {select_read, {KeepFromInfo, {_, Data}}} =
         socket:recvfrom(Sock, 0, nowait),
-    erlang:garbage_collect(),
     NBufAllocs1 = binary_alloc_count(prim_socket, drv_binary),
 
     ok = socket:sendto(Sender, Data, Addr),
     await_rcvbuf_select(Sock, KeepFromInfo),
     {select_read, {KeepMsgInfo, #{iov := [Data]}}} =
         socket:recvmsg(Sock, 0, 0, nowait),
-    erlang:garbage_collect(),
     NBufAllocs1 = binary_alloc_count(prim_socket, drv_binary),
 
     %% No-keep releases it after either API completes a read.
@@ -12140,14 +12138,12 @@ api_opt_otp_rcvbuf_nokeep_select_read_dgram() ->
     await_rcvbuf_select(Sock, KeepMsgInfo),
     {select_read, {FromInfo, {_, Data}}} =
         socket:recvfrom(Sock, 0, nowait),
-    erlang:garbage_collect(),
     NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
 
     ok = socket:sendto(Sender, Data, Addr),
     await_rcvbuf_select(Sock, FromInfo),
     {select_read, {MsgInfo, #{iov := [Data]}}} =
         socket:recvmsg(Sock, 0, 0, nowait),
-    erlang:garbage_collect(),
     NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
 
     %% Explicit buffer sizes follow the same release policy.
@@ -12155,14 +12151,12 @@ api_opt_otp_rcvbuf_nokeep_select_read_dgram() ->
     await_rcvbuf_select(Sock, MsgInfo),
     {select_read, {ExplicitFromInfo, {_, Data}}} =
         socket:recvfrom(Sock, 4096, nowait),
-    erlang:garbage_collect(),
     NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary),
 
     ok = socket:sendto(Sender, Data, Addr),
     await_rcvbuf_select(Sock, ExplicitFromInfo),
     {select_read, {_ExplicitMsgInfo, #{iov := [Data]}}} =
         socket:recvmsg(Sock, 4096, 0, nowait),
-    erlang:garbage_collect(),
     NBufAllocs0 = binary_alloc_count(prim_socket, drv_binary).
 
 
