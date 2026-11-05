@@ -239,7 +239,7 @@ init({call, From}, {Pid, #{current_write := WriteState,
                            key_update_at := KeyUpdateAt,
                            log_level := LogLevel,
                            hibernate_after := HibernateAfter,
-                           keylog_fun := Fun}},
+                           keylog_fun := Fun} = InitMsg},
      #data{connection_states = ConnectionStates0, env = Env0} = StateData0) ->
     ConnectionStates = case BeastMitigation of
                            disabled ->
@@ -266,6 +266,7 @@ init({call, From}, {Pid, #{current_write := WriteState,
     proc_lib:set_label({tls_sender, Role, {connection, Pid}}),
     put(log_level, LogLevel),
     put(tls_role, Role),
+    ok = maybe_monitor_connection(maps:get(monitor_connection, InitMsg, false), Pid),
     {next_state, handshake, StateData, [{reply, From, ok}]};
 init(info = Type, Msg, StateData) ->
     handle_common(init, Type, Msg, StateData);
@@ -401,6 +402,8 @@ async_wait(info, tick, _StateData) ->
     {keep_state_and_data, []};
 async_wait(Type, {'EXIT', _, _} = Msg, StateData) ->
     handle_common(?FUNCTION_NAME, Type, Msg, StateData);
+async_wait(Type, {'DOWN', _, process, _, _} = Msg, StateData) ->
+    handle_common(?FUNCTION_NAME, Type, Msg, StateData);
 async_wait(_T, _Msg, _) ->
     {keep_state_and_data, [postpone]}.
 
@@ -524,6 +527,12 @@ handle_common(_StateName, info, {'EXIT', _Sup, Reason},
     end;
 handle_common(_StateName, info, {'EXIT', _Sup, shutdown}, StateData) ->
     {stop, shutdown, StateData};
+%% Started without a per-connection supervisor, so nothing else couples this
+%% process to the connection process. Follow it down, whatever it died of, and
+%% stop with shutdown so the exit stays quiet.
+handle_common(_StateName, info, {'DOWN', _Ref, process, Pid, _Reason},
+              #data{env = #env{connection_pid = Pid}} = StateData) ->
+    {stop, shutdown, StateData};
 handle_common(_StateName, info, {'$socket', _, abort, Reason}, StateData) ->
     ?SSL_LOG(info, "TLS sender received socket error", [{message, Reason}]),
     {stop, shutdown, StateData};
@@ -534,6 +543,12 @@ handle_common(StateName, Type, Msg, StateData) ->
     ?SSL_LOG(error, "TLS sender received unexpected event",
              [{type, Type}, {message, Msg}]),
     hibernate_after(StateName, StateData, []).
+
+maybe_monitor_connection(true, Pid) ->
+    _ = erlang:monitor(process, Pid),
+    ok;
+maybe_monitor_connection(false, _Pid) ->
+    ok.
 
 send_tls_alert(#alert{} = Alert,
                #data{env = #env{negotiated_version = Version,

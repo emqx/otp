@@ -146,10 +146,19 @@ init(ConnSupv) ->
             init_statem(Args)
     end.
 
-init_statem([Role, Sup, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo]) ->
+%% The connection tree is started either by tls_connection_sup, which passes
+%% the per-connection supervisor, or directly by the process calling
+%% ssl:handshake, which has no supervisor to ask and passes the pid instead.
+sender_pid({sender, Sender}) when is_pid(Sender) ->
+    Sender;
+sender_pid(Sup) when is_pid(Sup) ->
+    {ok, {_, Sender, _, _}} = supervisor:which_child(Sup, sender),
+    Sender.
+
+init_statem([Role, SupOrSender, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo]) ->
     process_flag(trap_exit, true),
 
-    {ok, {_, Sender,_,_}} = supervisor:which_child(Sup, sender),
+    Sender = sender_pid(SupOrSender),
 
     case maps:get(erl_dist, TLSOpts, false) of
         true ->
