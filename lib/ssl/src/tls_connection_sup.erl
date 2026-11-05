@@ -46,10 +46,37 @@ start_link_dist() ->
     supervisor:start_link({local, tls_dist_connection_sup}, ?MODULE, []).
 
 start_child(Args) ->
-    supervisor:start_child(?MODULE, Args).
+    case application:get_env(ssl, connection_tree_owner, supervisor) of
+        caller ->
+            start_child_in_caller(Args);
+        _ ->
+            supervisor:start_child(?MODULE, Args)
+    end.
 
 start_child_dist(Args) ->
     supervisor:start_child(tls_dist_connection_sup, Args).
+
+%% Start the connection tree from the calling process instead of from this
+%% supervisor. supervisor:start_child/2 is a gen_server:call, and the start it
+%% performs waits in proc_lib:sync_start/2, a selective receive the compiler
+%% cannot mark. Each start therefore scans this supervisor's whole mailbox, so
+%% one start costs work proportional to the backlog and a large backlog never
+%% clears. Starting in the caller scans the caller's mailbox, which holds
+%% almost nothing, and lets starts run in parallel.
+start_child_in_caller([SenderArgs, ReceiverArgs]) ->
+    case tls_dyn_connection_sup:start_link(SenderArgs, ReceiverArgs) of
+        {ok, Sup} = Ok ->
+            %% The caller starts the tree but does not supervise it. Drop the
+            %% link that supervisor:start_link/2 created, because the tree
+            %% shuts down through its significant child on every normal
+            %% connection close, and that exit must not reach a caller that
+            %% does not trap exits. The connection process monitors the user
+            %% process, so a caller that dies still takes the tree with it.
+            true = unlink(Sup),
+            Ok;
+        Other ->
+            Other
+    end.
     
 %%%=========================================================================
 %%%  Supervisor callback
