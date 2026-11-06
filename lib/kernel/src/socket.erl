@@ -896,7 +896,7 @@ hence above all OS protocol levels.
   `N` specifies the number of read attempts to do in a tight loop before
   assuming no more data is pending.  The value `false` disables retaining
   the receive buffer when a receive with size 0 would block, or when a receive
-  fully completes under `select_read` reginme. The buffer is allocated again
+  fully completes under `select_read` regime. The buffer is allocated again
   when the receive operation is retried. Using `{1,BufSize}`
   is equivalent to `BufSize`.
 
