@@ -834,7 +834,9 @@ call(FsmPid, Event) ->
 	exit:{shutdown,_} ->
 	    {error, closed};
         exit:{{shutdown, _},_} ->
-	    {error, closed}
+	    {error, closed};
+        exit:{killed, _} ->
+            {error, closed}
     end.
 
 %%-------------- Erlang distribution helpers ------------------------------
