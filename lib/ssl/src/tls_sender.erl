@@ -527,9 +527,9 @@ handle_common(_StateName, info, {'EXIT', _Sup, Reason},
     end;
 handle_common(_StateName, info, {'EXIT', _Sup, shutdown}, StateData) ->
     {stop, shutdown, StateData};
-%% Started without a per-connection supervisor, so nothing else couples this
-%% process to the connection process. Follow it down, whatever it died of, and
-%% stop with shutdown so the exit stays quiet.
+%% Started without a per-connection supervisor. The connection process kills
+%% this process in its terminate/3; this covers a connection process that did
+%% not run terminate/3, for example because it was killed.
 handle_common(_StateName, info, {'DOWN', _Ref, process, Pid, _Reason},
               #data{env = #env{connection_pid = Pid}} = StateData) ->
     {stop, shutdown, StateData};
@@ -849,7 +849,9 @@ call(FsmPid, Event) ->
 	exit:{shutdown,_} ->
 	    {error, closed};
         exit:{{shutdown, _},_} ->
-	    {error, closed}
+	    {error, closed};
+        exit:{killed, _} ->
+            {error, closed}
     end.
 
 %%-------------- Erlang distribution helpers ------------------------------

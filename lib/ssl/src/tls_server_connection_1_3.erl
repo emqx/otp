@@ -124,7 +124,11 @@ init([?SERVER_ROLE, Sender, Tab, Host, Port, Socket, Options,  User, CbInfo]) ->
     end.
 
 terminate(Reason, StateName, State) ->
-    ssl_gen_statem:terminate(Reason, StateName, State).
+    try
+        ssl_gen_statem:terminate(Reason, StateName, State)
+    after
+        ssl_gen_statem:kill_unsupervised_sender()
+    end.
 
 format_status(Type, Data) ->
     ssl_gen_statem:format_status(Type, Data).
