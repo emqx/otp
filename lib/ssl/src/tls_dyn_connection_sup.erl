@@ -67,9 +67,12 @@ init([Parent, SenderArgs, ReceiverSpawnOpts]) ->
     {ok, {SupFlags, ChildSpecs}}.
 
 sender(Args) ->
+    %% The receiver owns the socket, so it is closed when the receiver exits.
+    %% The sender has nothing left to do after that: kill it without waiting.
     #{id          => sender,
       restart     => temporary,
       type        => worker,
+      shutdown    => brutal_kill,
       start       => {tls_sender, start_link, Args},
       modules     => [tls_sender]
      }.
