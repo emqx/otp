@@ -302,14 +302,12 @@ init_per_group(Group, Config0) ->
 
 end_per_group(http_unix_socket, Config) ->
     Pid = ?config(dummy_server_pid, Config),
-    Pid ! {stop, self()},
-    %% request is needed for enforcing dummy server and handlers stop; without a
-    %% it, dummy server waits in gen_tcp:accept and will not process stop request
-    httpc:request(get, {"http://localhost/v1/kv/foo", []}, [], []),
-    receive
-        {stopped, _DummyServerPid} ->
-            ok
-    end,
+    %% invalid_ipfamily_unix_socket resets the profile to TCP options, so the
+    %% wake connection cannot go through httpc.
+    stop_dummy_server(Pid, fun() ->
+                                   gen_tcp:connect({local, ?UNIX_SOCKET}, 0,
+                                                  [local, {active, false}], 5000)
+                           end),
     file:delete(?UNIX_SOCKET),
     ok;
 end_per_group(sim_http_process_leak, Config) ->
@@ -1870,19 +1868,26 @@ timeout_memory_leak(Config) when is_list(Config) ->
     Profile = ?config(profile, Config),
     case httpc:request(get, Request, [{connect_timeout, 500}, {timeout, 1}], [{sync, true}], Profile) of
 	{error, timeout} ->
-	    %% And now we check the size of the handler db
-	    Info = httpc:info(Profile),
-	    ct:log("Info: ~p", [Info]),
-	    {value, {handlers, Handlers}} =
-		lists:keysearch(handlers, 1, Info),
-	    case Handlers of
-		[] ->
-		    ok;
-		_ ->
-		    ct:fail({unexpected_handlers, Handlers})
-	    end;
+	    %% Cancelling a request is asynchronous, so the handler may still be
+	    %% in the db when the request returns.
+	    wait_for_cancelled_handlers(Profile, 20);
 	Unexpected ->
 	    ct:fail({unexpected, Unexpected})
+    end.
+
+wait_for_cancelled_handlers(Profile, Retries) ->
+    Info = httpc:info(Profile),
+    ct:log("Info: ~p", [Info]),
+    {value, {handlers, Handlers}} =
+        lists:keysearch(handlers, 1, Info),
+    case Handlers of
+        [] ->
+            ok;
+        _ when Retries > 0 ->
+            timer:sleep(5),
+            wait_for_cancelled_handlers(Profile, Retries - 1);
+        _ ->
+            ct:fail({unexpected_handlers, Handlers})
     end.
 
 %%--------------------------------------------------------------------
