@@ -35,6 +35,8 @@
 -include("tls_handshake.hrl").
 -include("tls_connection.hrl").
 
+-define(UNSUPERVISED_SENDER, tls_unsupervised_sender).
+
 %% Initial Erlang process setup
 -export([tls_start_link/2,
          dtls_start_link/2,
@@ -94,7 +96,8 @@
          handle_trusted_certs_db/1,
          maybe_invalidate_session/6,
          maybe_invalidate_session/5,
-         terminate/3]).
+         terminate/3,
+         kill_unsupervised_sender/0]).
 
 %% Log handling
 -export([format_status/2]).
@@ -146,10 +149,22 @@ init(ConnSupv) ->
             init_statem(Args)
     end.
 
-init_statem([Role, Sup, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo]) ->
+%% The connection tree is started either by tls_connection_sup, which passes
+%% the per-connection supervisor, or directly by the process calling
+%% ssl:handshake, which has no supervisor to ask and passes the pid instead.
+sender_pid({sender, Sender}) when is_pid(Sender) ->
+    %% No supervisor stops this sender, so terminate/3 kills it, see
+    %% kill_unsupervised_sender/0.
+    put(?UNSUPERVISED_SENDER, Sender),
+    Sender;
+sender_pid(Sup) when is_pid(Sup) ->
+    {ok, {_, Sender, _, _}} = supervisor:which_child(Sup, sender),
+    Sender.
+
+init_statem([Role, SupOrSender, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo]) ->
     process_flag(trap_exit, true),
 
-    {ok, {_, Sender,_,_}} = supervisor:which_child(Sup, sender),
+    Sender = sender_pid(SupOrSender),
 
     case maps:get(erl_dist, TLSOpts, false) of
         true ->
@@ -1265,6 +1280,20 @@ terminate(Reason, _StateName, #state{static_env = #static_env{transport_cb = Tra
                                     } = State) ->
     handle_trusted_certs_db(State),
     Connection:close(Reason, Socket, Transport, undefined).
+
+%% Called by terminate/3 of each TLS connection module, after terminate/3 above
+%% has closed the socket. With no per-connection supervisor nothing else stops
+%% the sender, and it has nothing left to do, so kill it rather than wait for
+%% it to see this process go down.
+kill_unsupervised_sender() ->
+    case get(?UNSUPERVISED_SENDER) of
+        Sender when is_pid(Sender) ->
+            exit(Sender, kill),
+            ok;
+        undefined ->
+            ok
+    end.
+
 %%====================================================================
 %% Log handling
 %%====================================================================

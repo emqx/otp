@@ -80,9 +80,8 @@ start_fsm(Host, Port, Socket, {SSLOpts, _, _Trackers} = Opts,
     ErlDist = maps:get(erl_dist, SSLOpts, false),
     SenderSpawnOpts = maps:get(sender_spawn_opts, SSLOpts, []),
     SenderOptions = handle_sender_options(ErlDist, SenderSpawnOpts),
-    {ok, DynSup} = start_connection_tree(ErlDist, SenderOptions,
+    {ok, Receiver} = start_connection_tree(ErlDist, SenderOptions,
                                    [client, Host, Port, Socket, Opts, User, CbInfo]),
-    {ok, {_, Receiver,_,_}} = supervisor:which_child(DynSup, receiver),
     receive {Receiver, user_socket, UserSocket} ->
             case ssl_gen_statem:socket_control(UserSocket) of
                 {ok, SslSocket} ->
@@ -97,9 +96,8 @@ start_fsm(Port, Socket, {SSLOpts, _, _Trackers} = Opts,
     ErlDist = maps:get(erl_dist, SSLOpts, false),
     SenderSpawnOpts = maps:get(sender_spawn_opts, SSLOpts, []),
     SenderOptions = handle_sender_options(ErlDist, SenderSpawnOpts),
-    {ok, DynSup} = start_connection_tree(ErlDist, SenderOptions,
+    {ok, Receiver} = start_connection_tree(ErlDist, SenderOptions,
                                    [server, "localhost", Port, Socket, Opts, User, CbInfo]),
-    {ok, {_, Receiver,_,_}} = supervisor:which_child(DynSup, receiver),
     receive {Receiver, user_socket, UserSocket} ->
             ssl_gen_statem:socket_control(UserSocket)
     end.
@@ -115,10 +113,73 @@ handle_sender_options(ErlDist, SpawnOpts) ->
 start_connection_tree(IsErlDist, SenderOpts, ReceiverOpts) ->
     case IsErlDist of
         false ->
-            tls_connection_sup:start_child([SenderOpts, ReceiverOpts]);
+            case no_connection_supervisor() of
+                true ->
+                    start_connection_pair(SenderOpts, ReceiverOpts);
+                false ->
+                    receiver_of(tls_connection_sup:start_child([SenderOpts, ReceiverOpts]))
+            end;
         true ->
-            tls_connection_sup:start_child_dist([SenderOpts, ReceiverOpts])
-    end.   
+            receiver_of(tls_connection_sup:start_child_dist([SenderOpts, ReceiverOpts]))
+    end.
+
+receiver_of({ok, Sup}) ->
+    {ok, {_, Receiver, _, _}} = supervisor:which_child(Sup, receiver),
+    {ok, Receiver};
+receiver_of(Other) ->
+    Other.
+
+%% Start the sender and the receiver directly, with no per-connection
+%% supervisor. tls_dyn_connection_sup exists to couple the two processes, and
+%% to hold them in the ssl supervision tree. The coupling is reproduced by a
+%% monitor from the sender to the receiver, see the monitor_connection key
+%% below. The tree membership is given up on purpose, which is why this is not
+%% the default: ssl cannot assume an arbitrary caller is a safe owner. An
+%% embedder whose callers are already supervised gets back one process and
+%% about 4 KB for each TLS connection.
+start_connection_pair(SenderOpts, ReceiverOpts) ->
+    [Role, _Host, _Port, _Socket, {SslOpts, _, _}, _User, _CbInfo] = ReceiverOpts,
+    ReceiverSpawnOpts = maps:get(receiver_spawn_opts, SslOpts, []),
+    case apply(tls_sender, start_link, SenderOpts) of
+        {ok, Sender} ->
+            %% The sender traps exits from the moment it starts, so it does
+            %% not die with the caller. Stop it by hand if the receiver cannot
+            %% be spawned, which spawn_opt reports by raising system_limit.
+            %% Without this the handshake fails and leaves a sender behind.
+            try
+                start_receiver(Sender, ReceiverSpawnOpts, Role, ReceiverOpts)
+            catch
+                Class:Reason:Stacktrace ->
+                    ok = stop_sender(Sender),
+                    erlang:raise(Class, Reason, Stacktrace)
+            end;
+        Error ->
+            Error
+    end.
+
+start_receiver(Sender, ReceiverSpawnOpts, Role, ReceiverOpts) ->
+    {ok, Receiver} = ssl_gen_statem:tls_start_link(self(), ReceiverSpawnOpts),
+    %% Hand the options over while the receiver is still linked. It blocks in
+    %% init until this message arrives, with nothing monitored yet, so a
+    %% caller that dies before this point has to take it down.
+    Receiver ! {self(), options, [Role, {sender, Sender} | tl(ReceiverOpts)]},
+    %% The caller starts the pair but does not supervise it. Both processes
+    %% stop with a shutdown reason, which would kill a caller that does not
+    %% trap exits, so drop the links that start_link created. The receiver
+    %% monitors the user process, so a caller that dies later still takes the
+    %% pair with it.
+    true = unlink(Sender),
+    true = unlink(Receiver),
+    {ok, Receiver}.
+
+stop_sender(Sender) ->
+    %% Unlink first, so this shutdown does not reach the caller.
+    true = unlink(Sender),
+    exit(Sender, shutdown),
+    ok.
+
+no_connection_supervisor() ->
+    application:get_env(ssl, connection_tree_owner, supervisor) =:= caller_no_sup.
 
 pids(#state{protocol_specific = #{sender := Sender}}) ->
     [self(), Sender].
@@ -157,7 +218,8 @@ initialize_tls_sender(#state{static_env = #static_env{
              key_update_at => KeyUpdateAt,
              log_level => LogLevel,
              hibernate_after => HibernateAfter,
-             keylog_fun => KeyLogFun},
+             keylog_fun => KeyLogFun,
+             monitor_connection => no_connection_supervisor()},
     tls_sender:initialize(Sender, Init).
 
 %%====================================================================
