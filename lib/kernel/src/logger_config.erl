@@ -94,6 +94,16 @@ get(Tid) ->
     Configs = ets:match(Tid, {{?HANDLER_KEY, '_'}, '$1'}),
     lists:flatten(Configs).
 
+get(Tid, primary) ->
+    case persistent_term:get({?MODULE, table_key(primary), conf}, undefined) of
+        undefined -> 
+            [{_, Config}] = ets:lookup(Tid, table_key(primary)),
+            ok = persistent_term:put({?MODULE, table_key(primary), conf}, Config),
+            {ok, Config};
+        Config ->
+            {ok, Config}
+    end;
+
 get(Tid,What) ->
     case ets:lookup(Tid,table_key(What)) of
         [{_,Config}] ->
@@ -133,6 +143,7 @@ set(Tid,What,Config) ->
     ok = persistent_term:put({?MODULE,table_key(What)}, LevelInt),
     case What of
         primary ->
+            ok = persistent_term:put({?MODULE, table_key(What), conf}, Config),
             %% If we change primary level, then we need to flush
             %% the module level cache.
             [persistent_term:put(Key,?PRIMARY_TO_CACHE(LevelInt))
