@@ -780,53 +780,45 @@ handle_request(Method, Url,
             Options       = request_options(Options0),
             Sync          = proplists:get_value(sync,   Options),
             Stream        = proplists:get_value(stream, Options),
-            Receiver0     = proplists:get_value(receiver, Options),
-            {Receiver, OwnedAlias} = sync_request_receiver(Sync, Receiver0),
-            try
-                SocketOpts    = proplists:get_value(socket_opts, Options),
-                UnixSocket    = proplists:get_value(unix_socket, Options),
-                BracketedHost = proplists:get_value(ipv6_host_with_brackets,
-                                                    Options),
+            Receiver      = proplists:get_value(receiver, Options),
+            SocketOpts    = proplists:get_value(socket_opts, Options),
+	    UnixSocket    = proplists:get_value(unix_socket, Options),
+            BracketedHost = proplists:get_value(ipv6_host_with_brackets,
+                                                Options),
 
-                Scheme        = scheme_to_atom(maps:get(scheme, URI, undefined)),
-                Userinfo      = maps:get(userinfo, URI, ""),
-                Host          = http_util:maybe_add_brackets(maps:get(host, URI, ""), BracketedHost),
-                Port          = maps:get(port, URI, default_port(Scheme)),
-                Host2         = http_request:normalize_host(Scheme, Host, Port),
-                Path          = uri_string:recompose(#{path => maps:get(path, URI, "")}),
-                Query         = add_question_mark(maps:get(query, URI, "")),
-                HeadersRecord = header_record(NewHeaders, Host2, HTTPOptions),
+            Scheme        = scheme_to_atom(maps:get(scheme, URI, undefined)),
+            Userinfo      = maps:get(userinfo, URI, ""),
+            Host          = http_util:maybe_add_brackets(maps:get(host, URI, ""), BracketedHost),
+            Port          = maps:get(port, URI, default_port(Scheme)),
+            Host2         = http_request:normalize_host(Scheme, Host, Port),
+            Path          = uri_string:recompose(#{path => maps:get(path, URI, "")}),
+            Query         = add_question_mark(maps:get(query, URI, "")),
+            HeadersRecord = header_record(NewHeaders, Host2, HTTPOptions),
 
-                Request = #request{from          = Receiver,
-                                   scheme        = Scheme,
-                                   address       = {Host, Port},
-                                   path          = Path,
-                                   pquery        = Query,
-                                   method        = Method,
-                                   headers       = HeadersRecord,
-                                   content       = {ContentType, Body},
-                                   settings      = HTTPOptions,
-                                   abs_uri       = Url,
-                                   userinfo      = Userinfo,
-                                   stream        = Stream,
-                                   headers_as_is = headers_as_is(Headers0, Options),
-                                   socket_opts   = SocketOpts,
-                                   started       = Started,
-                                   unix_socket   = UnixSocket,
-                                   ipv6_host_with_brackets = BracketedHost,
-                                   request_options         = Options},
-                case httpc_manager:request(Request, profile_name(Profile)) of
-                    {ok, RequestId} ->
-                        handle_answer(RequestId, Receiver, Sync, Options,
-                                      element(#http_options.timeout, HTTPOptions));
-                    {error, Reason} ->
-                        ok = deactivate_owned_alias(OwnedAlias),
-                        {error, Reason}
-                end
-            catch
-                Class:Exc:Stack ->
-                    ok = deactivate_owned_alias(OwnedAlias),
-                    erlang:raise(Class, Exc, Stack)
+	    Request = #request{from          = Receiver,
+			       scheme        = Scheme,
+			       address       = {Host, Port},
+			       path          = Path,
+			       pquery        = Query,
+			       method        = Method,
+			       headers       = HeadersRecord, 
+			       content       = {ContentType, Body},
+			       settings      = HTTPOptions, 
+			       abs_uri       = Url,
+			       userinfo      = Userinfo,
+			       stream        = Stream, 
+			       headers_as_is = headers_as_is(Headers0, Options),
+			       socket_opts   = SocketOpts, 
+			       started       = Started,
+			       unix_socket   = UnixSocket,
+			       ipv6_host_with_brackets = BracketedHost,
+			       request_options         = Options},
+            case send_request(Request, Sync, profile_name(Profile)) of
+                {ok, RequestId, ClientReceiver} ->
+                    handle_answer(RequestId, ClientReceiver, Sync, Options,
+                                  element(#http_options.timeout, HTTPOptions));
+                {error, Reason} ->
+                    {error, Reason}
             end
         end
     catch
@@ -836,24 +828,33 @@ handle_request(Method, Url,
 	    Error
     end.
 
-
-%% A synchronous request delivers the reply into this process and then
-%% deactivates the alias, so a late message after timeout is dropped
-%% (OTP-19221). The documented asynchronous default is the calling
-%% process. Creating the alias while building default options would
-%% leave it active for every request, including ones that pass their
-%% own receiver.
-sync_request_receiver(true, Pid) when is_pid(Pid) ->
+%% A synchronous request gets its own alias as the receiver, so that a
+%% reply arriving after handle_answer/5 has timed out is dropped
+%% (OTP-19221). The alias is created only once the request is built and
+%% is deactivated if the manager does not take the request. Asynchronous
+%% requests keep the documented default receiver, the calling process.
+send_request(#request{from = Pid} = Request, true, ProfileName)
+  when is_pid(Pid) ->
     Alias = alias(),
-    {Alias, Alias};
-sync_request_receiver(_Sync, Receiver) ->
-    {Receiver, undefined}.
+    try httpc_manager:request(Request#request{from = Alias}, ProfileName) of
+        {ok, RequestId} ->
+            {ok, RequestId, Alias};
+        {error, _} = Error ->
+            unalias(Alias),
+            Error
+    catch
+        Class:Reason:Stacktrace ->
+            unalias(Alias),
+            erlang:raise(Class, Reason, Stacktrace)
+    end;
+send_request(#request{from = Receiver} = Request, _Sync, ProfileName) ->
+    case httpc_manager:request(Request, ProfileName) of
+        {ok, RequestId} ->
+            {ok, RequestId, Receiver};
+        {error, _} = Error ->
+            Error
+    end.
 
-deactivate_owned_alias(undefined) ->
-    ok;
-deactivate_owned_alias(Alias) when is_reference(Alias) ->
-    _ = unalias(Alias),
-    ok.
 
 add_question_mark(<<>>) ->
     <<>>;
@@ -1152,7 +1153,7 @@ request_options_defaults() ->
      {body_format,             string,    VerifyBodyFormat},
      {full_result,             true,      VerifyFullResult},
      {headers_as_is,           false,     VerifyHeaderAsIs},
-     {receiver,                self(),     VerifyReceiver},
+     {receiver,                self(),    VerifyReceiver},
      {socket_opts,             undefined, VerifySocketOpts},
      {ipv6_host_with_brackets, false,     VerifyBrackets}
     ]. 
