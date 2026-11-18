@@ -813,9 +813,9 @@ handle_request(Method, Url,
 			       unix_socket   = UnixSocket,
 			       ipv6_host_with_brackets = BracketedHost,
 			       request_options         = Options},
-            case httpc_manager:request(Request, profile_name(Profile)) of
-                {ok, RequestId} ->
-                    handle_answer(RequestId, Receiver, Sync, Options,
+            case send_request(Request, Sync, profile_name(Profile)) of
+                {ok, RequestId, ClientReceiver} ->
+                    handle_answer(RequestId, ClientReceiver, Sync, Options,
                                   element(#http_options.timeout, HTTPOptions));
                 {error, Reason} ->
                     {error, Reason}
@@ -826,6 +826,33 @@ handle_request(Method, Url,
 	    {error, {not_started, Profile}};
 	throw:Error ->
 	    Error
+    end.
+
+%% A synchronous request gets its own alias as the receiver, so that a
+%% reply arriving after handle_answer/5 has timed out is dropped
+%% (OTP-19221). The alias is created only once the request is built and
+%% is deactivated if the manager does not take the request. Asynchronous
+%% requests keep the documented default receiver, the calling process.
+send_request(#request{from = Pid} = Request, true, ProfileName)
+  when is_pid(Pid) ->
+    Alias = alias(),
+    try httpc_manager:request(Request#request{from = Alias}, ProfileName) of
+        {ok, RequestId} ->
+            {ok, RequestId, Alias};
+        {error, _} = Error ->
+            unalias(Alias),
+            Error
+    catch
+        Class:Reason:Stacktrace ->
+            unalias(Alias),
+            erlang:raise(Class, Reason, Stacktrace)
+    end;
+send_request(#request{from = Receiver} = Request, _Sync, ProfileName) ->
+    case httpc_manager:request(Request, ProfileName) of
+        {ok, RequestId} ->
+            {ok, RequestId, Receiver};
+        {error, _} = Error ->
+            Error
     end.
 
 
@@ -1126,7 +1153,7 @@ request_options_defaults() ->
      {body_format,             string,    VerifyBodyFormat},
      {full_result,             true,      VerifyFullResult},
      {headers_as_is,           false,     VerifyHeaderAsIs},
-     {receiver,                alias(),    VerifyReceiver},
+     {receiver,                self(),    VerifyReceiver},
      {socket_opts,             undefined, VerifySocketOpts},
      {ipv6_host_with_brackets, false,     VerifyBrackets}
     ]. 

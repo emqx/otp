@@ -58,6 +58,7 @@ all() ->
      {group, http},
      {group, http_ipv6},
      {group, sim_http},
+     {group, sim_http_process_leak},
      {group, sim_http_ipv6},
      {group, http_internal},
      {group, http_unix_socket},
@@ -76,6 +77,8 @@ groups() ->
      %% will fail.
      {sim_http, [], only_simulated() ++ server_closing_connection() ++
           [process_leak_on_keepalive]},
+     %% Locally ported from erlang/otp; remove this group when syncing upstream.
+     {sim_http_process_leak, [], [async_alias_does_not_grow_caller]},
      {sim_http_ipv6, [], only_simulated() ++ server_closing_connection()
           % The following two tests are not functional on IPv6 yet:
           % ++ [process_leak_on_keepalive]
@@ -286,6 +289,11 @@ init_per_group(Group, Config0) when Group == http_ipv6;
         false ->
             {skip, "Host does not support IPv6"}
      end;
+init_per_group(sim_http_process_leak = Group, Config0) ->
+    start_apps(Group),
+    {Pid, Port} = start_sim_http_server(),
+    Config = proplists:delete(port, Config0),
+    [{port, Port}, {dummy_server_pid, Pid} | Config];
 init_per_group(Group, Config0) ->
     start_apps(Group),
     Config = proplists:delete(port, Config0),
@@ -294,18 +302,50 @@ init_per_group(Group, Config0) ->
 
 end_per_group(http_unix_socket, Config) ->
     Pid = ?config(dummy_server_pid, Config),
-    Pid ! {stop, self()},
-    %% request is needed for enforcing dummy server and handlers stop; without a
-    %% it, dummy server waits in gen_tcp:accept and will not process stop request
-    httpc:request(get, {"http://localhost/v1/kv/foo", []}, [], []),
-    receive
-        {stopped, _DummyServerPid} ->
-            ok
-    end,
+    %% invalid_ipfamily_unix_socket resets the profile to TCP options, so the
+    %% wake connection cannot go through httpc.
+    stop_dummy_server(Pid, fun() ->
+                                   gen_tcp:connect({local, ?UNIX_SOCKET}, 0,
+                                                  [local, {active, false}], 5000)
+                           end),
     file:delete(?UNIX_SOCKET),
     ok;
+end_per_group(sim_http_process_leak, Config) ->
+    Pid = ?config(dummy_server_pid, Config),
+    Port = ?config(port, Config),
+    stop_dummy_server(Pid, fun() ->
+                                   gen_tcp:connect({127,0,0,1}, Port,
+                                                  [binary, {active, false}], 5000)
+                           end);
 end_per_group(_, _Config) ->
     ok.
+
+%% The dummy server blocks in gen_tcp:accept and only handles the stop message
+%% after a connection wakes it up, so the caller supplies the wake connection.
+stop_dummy_server(Pid, WakeFun) ->
+    case is_process_alive(Pid) of
+        false ->
+            ok;
+        true ->
+            Pid ! {stop, self()},
+            case WakeFun() of
+                {ok, WakeSocket} ->
+                    receive
+                        {stopped, Pid} ->
+                            ok
+                    after 5000 ->
+                        ct:fail({dummy_server_did_not_stop, Pid})
+                    end,
+                    ok = gen_tcp:close(WakeSocket);
+                {error, Reason} ->
+                    case is_process_alive(Pid) of
+                        false ->
+                            ok;
+                        true ->
+                            ct:fail({dummy_server_wakeup_failed, Reason})
+                    end
+            end
+    end.
 
 do_init_per_group(Group=sim_mixed, Config0) ->
     % The mixed group uses two server ports (http and https), so we use
@@ -1590,6 +1630,160 @@ process_leak_on_keepalive(Config) ->
     ok.
 
 %%-------------------------------------------------------------------------
+%% An asynchronous request must not leave an active alias in the caller.
+%% A synchronous request still uses one, which handle_answer/5 deactivates
+%% when the reply arrives, including a reply that carries a connection
+%% error. A bad scheme throws after the alias is created and never reaches
+%% handle_answer/5, so the error path of handle_request/9 deactivates it.
+%%
+%% One active alias is about 100 bytes of process_info(memory), so 1500
+%% requests build a leak far above the ceiling while the heap steps that
+%% also move the counter stay below it.
+
+async_alias_does_not_grow_caller(Config) ->
+    Request = {url(sim_http, "/dummy.html", Config), []},
+    Profile = proplists:get_value(profile, Config, httpc:default_profile()),
+    Self = self(),
+    Samples = 1500,
+    Ceiling = 49152,
+    OkResponse = fun(Result) ->
+                         {ok, {{_, 200, _}, _, _}} = Result,
+                         ok
+                 end,
+    Async = fun() ->
+        {ok, Id} = httpc:request(get, Request, [], [{sync, false}], Profile),
+        receive
+            {http, {Id, {{_, 200, _}, _, _}}} ->
+                ok
+        after 5000 ->
+            ct:fail(no_async_reply)
+        end
+    end,
+    AsyncOwnReceiver = fun() ->
+        Receiver = fun(Reply) -> Self ! {reply, Reply} end,
+        {ok, Id} = httpc:request(get, Request, [],
+                                 [{sync, false}, {receiver, Receiver}], Profile),
+        receive
+            {reply, {Id, {{_, 200, _}, _, _}}} ->
+                ok
+        after 5000 ->
+            ct:fail(no_receiver_reply)
+        end
+    end,
+    Sync = fun() ->
+        OkResponse(httpc:request(get, Request, [], [], Profile))
+    end,
+    RefusedUrl = refused_url(),
+    Refused = fun() ->
+        {error, {failed_connect, [{to_address, _}, {inet, _, econnrefused}]}} =
+            httpc:request(get, {RefusedUrl, []}, [{timeout, 1000}], [], Profile),
+        ok
+    end,
+    BadScheme = fun() ->
+        {error, {bad_scheme, "ftp"}} =
+            httpc:request(get, {"ftp://127.0.0.1/", []}, [], [], Profile),
+        ok
+    end,
+    NotStartedProfile = unstarted_profile(),
+    NotStarted = fun() ->
+        try httpc:request(get, Request, [], [], NotStartedProfile) of
+            Result ->
+                {unexpected_result, Result}
+        catch
+            exit:{noproc, _} ->
+                ok
+        end
+    end,
+    SyncOwnReceiver = fun() ->
+        OkResponse(httpc:request(get, Request, [], [{receiver, self()}], Profile))
+    end,
+    Results =
+        [caller_memory_growth(Name, Fun, Samples) ||
+            {Name, Fun} <-
+                [{"async", Async},
+                 {"async own receiver", AsyncOwnReceiver},
+                 {"sync", Sync},
+                 {"sync refused", Refused},
+                 {"sync bad scheme", BadScheme},
+                 {"sync not started", NotStarted},
+                 {"sync own receiver", SyncOwnReceiver}]],
+    ?assertEqual([], [{Name, Growth, RequestErrors, FirstError} ||
+                         {Name, Growth, RequestErrors, FirstError} <- Results,
+                         Growth >= Ceiling orelse RequestErrors =/= 0]),
+    ok.
+
+%% Every scenario reports all of its own request errors, so a scenario that
+%% fails after the alias is created still contributes its memory growth.
+caller_memory_growth(Name, Fun, N) ->
+    _ = count_request_errors(Fun, 1),
+    erlang:garbage_collect(),
+    {memory, Before} = erlang:process_info(self(), memory),
+    {RequestErrors, FirstError} = count_request_errors(Fun, N),
+    erlang:garbage_collect(),
+    {memory, After} = erlang:process_info(self(), memory),
+    Growth = After - Before,
+    ct:pal("~s growth ~p errors ~p first_error ~p",
+           [Name, Growth, RequestErrors, FirstError]),
+    {Name, Growth, RequestErrors, FirstError}.
+
+count_request_errors(Fun, N) ->
+    count_request_errors(Fun, N, 0, undefined).
+
+count_request_errors(_Fun, 0, Errors, FirstError) ->
+    {Errors, FirstError};
+count_request_errors(Fun, N, Errors, FirstError) ->
+    case request_outcome(Fun) of
+        ok ->
+            count_request_errors(Fun, N - 1, Errors, FirstError);
+        Error ->
+            count_request_errors(Fun, N - 1, Errors + 1,
+                                 first_error(FirstError, Error))
+    end.
+
+request_outcome(Fun) ->
+    try Fun() of
+        ok -> ok;
+        Other -> {unexpected, Other}
+    catch
+        Class:Reason:Stack ->
+            case {Class, Reason} of
+                {exit, {test_case_failed, _}} ->
+                    erlang:raise(Class, Reason, Stack);
+                _ ->
+                    {Class, Reason}
+            end
+    end.
+
+first_error(undefined, Error) ->
+    Error;
+first_error(FirstError, _Error) ->
+    FirstError.
+
+%% Port 1 is normally unused; when it is not, listen on an ephemeral port,
+%% release it and rely on the request being refused there.
+refused_url() ->
+    case gen_tcp:connect({127,0,0,1}, 1, [], 100) of
+        {error, econnrefused} ->
+            "http://127.0.0.1:1/";
+        {ok, Socket} ->
+            ok = gen_tcp:close(Socket),
+            released_local_url();
+        {error, _} ->
+            released_local_url()
+    end.
+
+released_local_url() ->
+    {ok, ListenSocket} = gen_tcp:listen(0, [{ip, {127,0,0,1}}]),
+    {ok, Port} = inet:port(ListenSocket),
+    ok = gen_tcp:close(ListenSocket),
+    "http://127.0.0.1:" ++ integer_to_list(Port) ++ "/".
+
+unstarted_profile() ->
+    Profile = httpc_alias_not_started,
+    {error, {not_started, Profile}} = httpc:info(Profile),
+    Profile.
+
+%%-------------------------------------------------------------------------
 
 stream_to_pid(Config) when is_list(Config) ->
     ReceiverPid = create_receiver(pid),
@@ -1674,19 +1868,26 @@ timeout_memory_leak(Config) when is_list(Config) ->
     Profile = ?config(profile, Config),
     case httpc:request(get, Request, [{connect_timeout, 500}, {timeout, 1}], [{sync, true}], Profile) of
 	{error, timeout} ->
-	    %% And now we check the size of the handler db
-	    Info = httpc:info(Profile),
-	    ct:log("Info: ~p", [Info]),
-	    {value, {handlers, Handlers}} =
-		lists:keysearch(handlers, 1, Info),
-	    case Handlers of
-		[] ->
-		    ok;
-		_ ->
-		    ct:fail({unexpected_handlers, Handlers})
-	    end;
+	    %% Cancelling a request is asynchronous, so the handler may still be
+	    %% in the db when the request returns.
+	    wait_for_cancelled_handlers(Profile, 20);
 	Unexpected ->
 	    ct:fail({unexpected, Unexpected})
+    end.
+
+wait_for_cancelled_handlers(Profile, Retries) ->
+    Info = httpc:info(Profile),
+    ct:log("Info: ~p", [Info]),
+    {value, {handlers, Handlers}} =
+        lists:keysearch(handlers, 1, Info),
+    case Handlers of
+        [] ->
+            ok;
+        _ when Retries > 0 ->
+            timer:sleep(5),
+            wait_for_cancelled_handlers(Profile, Retries - 1);
+        _ ->
+            ct:fail({unexpected_handlers, Handlers})
     end.
 
 %%--------------------------------------------------------------------
@@ -2223,9 +2424,7 @@ group_name(Config) ->
     proplists:get_value(name, GroupProp).
 
 server_start(sim_http, _) ->
-    Inet = inet_version(),
-    ok = httpc:set_options([{ipfamily, Inet},{unix_socket, undefined}]),
-    {_Pid, Port} = http_test_lib:dummy_server(ip_comm, Inet, [{content_cb, ?MODULE}]),
+    {_Pid, Port} = start_sim_http_server(),
     Port;
 
 server_start(sim_http_ipv6, _) ->
@@ -2260,6 +2459,11 @@ server_start(_, HttpdConfig) ->
     ok = httpc:set_options([{ipfamily, inet_version()},{unix_socket, undefined}]),
     {value, {_, _, Info}} = lists:keysearch(Pid, 2, Serv),
     proplists:get_value(port, Info).
+
+start_sim_http_server() ->
+    Inet = inet_version(),
+    ok = httpc:set_options([{ipfamily, Inet}, {unix_socket, undefined}]),
+    http_test_lib:dummy_server(ip_comm, Inet, [{content_cb, ?MODULE}]).
 
 server_config(base, Config) ->
     ServerRoot = proplists:get_value(server_root, Config),
