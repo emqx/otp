@@ -76,7 +76,9 @@ groups() ->
      {http, [parallel], real_requests()},
      {http_ipv6, [parallel], [request_options]},
      {sim_http, [parallel], only_simulated() ++ server_closing_connection()},
-     {sim_http_process_leak, [process_leak_on_keepalive]},
+     {sim_http_process_leak, [process_leak_on_keepalive,
+                              %% Locally ported from erlang/otp; remove when syncing upstream.
+                              async_alias_does_not_grow_caller]},
      {sim_http_ipv6, [parallel], only_simulated() ++ server_closing_connection()
           % The following two tests are not functional on IPv6 yet:
           % ++ [process_leak_on_keepalive]
@@ -1654,6 +1656,160 @@ process_leak_on_keepalive(Config) ->
     %% the new one, so children count should stay the same
     ChildrenCount = supervisor:count_children(httpc_handler_sup),
     ok.
+
+%%-------------------------------------------------------------------------
+%% An asynchronous request must not leave an active alias in the caller.
+%% A synchronous request still uses one, which handle_answer/5 deactivates
+%% when the reply arrives, including a reply that carries a connection
+%% error. A bad scheme throws before the alias is created, and when the
+%% profile is not started send_request/3 deactivates the alias.
+%%
+%% One active alias is about 100 bytes of process_info(memory), so 1500
+%% requests build a leak far above the ceiling while the heap steps that
+%% also move the counter stay below it.
+
+async_alias_does_not_grow_caller(Config) ->
+    Request = {url(sim_http, "/dummy.html", Config), []},
+    Profile = proplists:get_value(profile, Config, httpc:default_profile()),
+    Self = self(),
+    Samples = 1500,
+    Ceiling = 49152,
+    OkResponse = fun(Result) ->
+                         {ok, {{_, 200, _}, _, _}} = Result,
+                         ok
+                 end,
+    Async = fun() ->
+        {ok, Id} = httpc:request(get, Request, [], [{sync, false}], Profile),
+        receive
+            {http, {Id, {{_, 200, _}, _, _}}} ->
+                ok
+        after 5000 ->
+            ct:fail(no_async_reply)
+        end
+    end,
+    AsyncOwnReceiver = fun() ->
+        Receiver = fun(Reply) -> Self ! {reply, Reply} end,
+        {ok, Id} = httpc:request(get, Request, [],
+                                 [{sync, false}, {receiver, Receiver}], Profile),
+        receive
+            {reply, {Id, {{_, 200, _}, _, _}}} ->
+                ok
+        after 5000 ->
+            ct:fail(no_receiver_reply)
+        end
+    end,
+    Sync = fun() ->
+        OkResponse(httpc:request(get, Request, [], [], Profile))
+    end,
+    RefusedUrl = refused_url(),
+    Refused = fun() ->
+        {error, {failed_connect, [{to_address, _}, {inet, _, econnrefused}]}} =
+            httpc:request(get, {RefusedUrl, []}, [{timeout, 1000}], [], Profile),
+        ok
+    end,
+    BadScheme = fun() ->
+        {error, {bad_scheme, "ftp"}} =
+            httpc:request(get, {"ftp://127.0.0.1/", []}, [], [], Profile),
+        ok
+    end,
+    NotStartedProfile = unstarted_profile(),
+    NotStarted = fun() ->
+        try httpc:request(get, Request, [], [], NotStartedProfile) of
+            Result ->
+                {unexpected_result, Result}
+        catch
+            exit:{noproc, _} ->
+                ok
+        end
+    end,
+    SyncOwnReceiver = fun() ->
+        OkResponse(httpc:request(get, Request, [], [{receiver, self()}], Profile))
+    end,
+    Results =
+        [caller_memory_growth(Name, Fun, Samples) ||
+            {Name, Fun} <-
+                [{"async", Async},
+                 {"async own receiver", AsyncOwnReceiver},
+                 {"sync", Sync},
+                 {"sync refused", Refused},
+                 {"sync bad scheme", BadScheme},
+                 {"sync not started", NotStarted},
+                 {"sync own receiver", SyncOwnReceiver}]],
+    ?assertEqual([], [{Name, Growth, RequestErrors, FirstError} ||
+                         {Name, Growth, RequestErrors, FirstError} <- Results,
+                         Growth >= Ceiling orelse RequestErrors =/= 0]),
+    ok.
+
+%% Every scenario reports all of its own request errors, so a scenario that
+%% fails after the alias is created still contributes its memory growth.
+caller_memory_growth(Name, Fun, N) ->
+    _ = count_request_errors(Fun, 1),
+    erlang:garbage_collect(),
+    {memory, Before} = erlang:process_info(self(), memory),
+    {RequestErrors, FirstError} = count_request_errors(Fun, N),
+    erlang:garbage_collect(),
+    {memory, After} = erlang:process_info(self(), memory),
+    Growth = After - Before,
+    ct:pal("~s growth ~p errors ~p first_error ~p",
+           [Name, Growth, RequestErrors, FirstError]),
+    {Name, Growth, RequestErrors, FirstError}.
+
+count_request_errors(Fun, N) ->
+    count_request_errors(Fun, N, 0, undefined).
+
+count_request_errors(_Fun, 0, Errors, FirstError) ->
+    {Errors, FirstError};
+count_request_errors(Fun, N, Errors, FirstError) ->
+    case request_outcome(Fun) of
+        ok ->
+            count_request_errors(Fun, N - 1, Errors, FirstError);
+        Error ->
+            count_request_errors(Fun, N - 1, Errors + 1,
+                                 first_error(FirstError, Error))
+    end.
+
+request_outcome(Fun) ->
+    try Fun() of
+        ok -> ok;
+        Other -> {unexpected, Other}
+    catch
+        Class:Reason:Stack ->
+            case {Class, Reason} of
+                {exit, {test_case_failed, _}} ->
+                    erlang:raise(Class, Reason, Stack);
+                _ ->
+                    {Class, Reason}
+            end
+    end.
+
+first_error(undefined, Error) ->
+    Error;
+first_error(FirstError, _Error) ->
+    FirstError.
+
+%% Port 1 is normally unused; when it is not, listen on an ephemeral port,
+%% release it and rely on the request being refused there.
+refused_url() ->
+    case gen_tcp:connect({127,0,0,1}, 1, [], 100) of
+        {error, econnrefused} ->
+            "http://127.0.0.1:1/";
+        {ok, Socket} ->
+            ok = gen_tcp:close(Socket),
+            released_local_url();
+        {error, _} ->
+            released_local_url()
+    end.
+
+released_local_url() ->
+    {ok, ListenSocket} = gen_tcp:listen(0, [{ip, {127,0,0,1}}]),
+    {ok, Port} = inet:port(ListenSocket),
+    ok = gen_tcp:close(ListenSocket),
+    "http://127.0.0.1:" ++ integer_to_list(Port) ++ "/".
+
+unstarted_profile() ->
+    Profile = httpc_alias_not_started,
+    {error, {not_started, Profile}} = httpc:info(Profile),
+    Profile.
 
 %%-------------------------------------------------------------------------
 
