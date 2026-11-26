@@ -1647,8 +1647,22 @@ call_fun(Process* p,    /* Current process. */
 	ErtsCodePtr code_ptr = fe->address;
 	Eterm* var_ptr;
 	unsigned num_free = funp->num_free;
-        const ErtsCodeMFA *mfa = erts_code_to_codemfa(code_ptr);
-	int actual_arity = mfa->arity;
+        const ErtsCodeMFA *mfa;
+	int actual_arity;
+
+        /*
+         * A fun entry's address must be a code pointer (or the static
+         * unloaded_fun marker), never a tagged Erlang term.  If it is a
+         * term, calling the fun used to jump to the term and crash the
+         * emulator with SIGSEGV.  Treat it as a badfun instead; the fun
+         * term is included in the exception so the caller can report it.
+         */
+        if (ERTS_UNLIKELY(!is_CP((Uint)code_ptr))) {
+            goto badfun;
+        }
+
+        mfa = erts_code_to_codemfa(code_ptr);
+	actual_arity = mfa->arity;
 
 	if (actual_arity == arity+num_free) {
 	    DTRACE_LOCAL_CALL(p, mfa);
